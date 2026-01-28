@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  nim       String   @id
+  nama      String
+  email     String   @unique
+  role      String   @default("student")
+  createdAt DateTime @default(now())
+  
+  krs       UserKRS[]
+  offers    BarterOffer[]
+}
+
+model Matakuliah {
+  kode       String   @id
+  nama       String
+  sks        Int
+  hari       String
+  jamMulai   String
+  jamSelesai String
+  ruangan    String
+  
+  userKRS    UserKRS[]
+}
+
+model UserKRS {
+  id        Int      @id @default(autoincrement())
+  nim       String
+  kodeMK    String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  
+  user       User       @relation(fields: [nim], references: [nim])
+  matakuliah Matakuliah @relation(fields: [kodeMK], references: [kode])
+  
+  @@unique([nim, kodeMK])
+}
+
+model BarterOffer {
+  id          Int      @id @default(autoincrement())
+  nimOfferer  String
+  offeringMK  String
+  wantedMK    String
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+  
+  offerer     User     @relation(fields: [nimOfferer], references: [nim])
+}
+
+model BarterTransaction {
+  id          Int      @id @default(autoincrement())
+  offerId     Int
+  nimA        String
+  nimB        String
+  mkA         String
+  mkB         String
+  completedAt DateTime @default(now())
+}
