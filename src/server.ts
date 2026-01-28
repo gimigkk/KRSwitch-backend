@@ -78,15 +78,15 @@ app.post('/api/offers', authenticate, async (req: any, res) => {
   try {
     // Validate: user is enrolled in myClass
     const enrollment = await prisma.enrollment.findFirst({
-      where: { nim: offererNim, classSectionId: myClassId }
+      where: { nim: offererNim, parallelClassId: myClassId }
     });
     if (!enrollment) {
       return res.status(400).json({ error: 'You are not enrolled in this class' });
     }
 
     // Validate: same course, same type
-    const myClass = await prisma.classSection.findUnique({ where: { id: myClassId } });
-    const wantedClass = await prisma.classSection.findUnique({ where: { id: wantedClassId } });
+    const myClass = await prisma.parallelClass.findUnique({ where: { id: myClassId } });
+    const wantedClass = await prisma.parallelClass.findUnique({ where: { id: wantedClassId } });
     
     if (!myClass || !wantedClass) {
       return res.status(404).json({ error: 'Class not found' });
@@ -145,7 +145,7 @@ app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
 
       // Validate taker is enrolled in wanted class
       const takerEnrollment = await tx.enrollment.findFirst({
-        where: { nim: takerNim, classSectionId: offer.wantedClassId }
+        where: { nim: takerNim, parallelClassId: offer.wantedClassId }
       });
       if (!takerEnrollment) throw new Error('You are not enrolled in the wanted class');
 
@@ -161,13 +161,13 @@ app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
 
       // Swap enrollments
       await tx.enrollment.updateMany({
-        where: { nim: offer.offererNim, classSectionId: offer.myClassId },
-        data: { classSectionId: offer.wantedClassId }
+        where: { nim: offer.offererNim, parallelClassId: offer.myClassId },
+        data: { parallelClassId: offer.wantedClassId }
       });
 
       await tx.enrollment.updateMany({
-        where: { nim: takerNim, classSectionId: offer.wantedClassId },
-        data: { classSectionId: offer.myClassId }
+        where: { nim: takerNim, parallelClassId: offer.wantedClassId },
+        data: { parallelClassId: offer.myClassId }
       });
 
       return offer;

@@ -18,7 +18,7 @@ model User {
   @@map("users")
 }
 
-model ClassSection {
+model ParallelClass {
   id          Int           @id @default(autoincrement())
   courseCode  String
   courseName  String
@@ -31,33 +31,33 @@ model ClassSection {
   wantedIn    BarterOffer[] @relation("WantedClass")
   enrollments Enrollment[]
 
-  @@map("class_sections")
+  @@map("parallel_classes")  // Changed to plural for consistency
 }
 
 model Enrollment {
-  id             Int          @id @default(autoincrement())
-  nim            String
-  classSectionId Int
-  classSection   ClassSection @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
-  user           User         @relation(fields: [nim], references: [nim], onDelete: Cascade)
+  id              Int           @id @default(autoincrement())
+  nim             String
+  parallelClassId Int           // Renamed from classSectionId
+  parallelClass   ParallelClass @relation(fields: [parallelClassId], references: [id], onDelete: Cascade)  // Changed from ClassSection
+  user            User          @relation(fields: [nim], references: [nim], onDelete: Cascade)
 
-  @@unique([nim, classSectionId])
+  @@unique([nim, parallelClassId])  // Updated field name
   @@map("enrollments")
 }
 
 model BarterOffer {
-  id            Int          @id @default(autoincrement())
+  id            Int           @id @default(autoincrement())
   offererNim    String
   myClassId     Int
   wantedClassId Int
-  status        String       @default("open")
-  createdAt     DateTime     @default(now())
+  status        String        @default("open")
+  createdAt     DateTime      @default(now())
   takerNim      String?
   completedAt   DateTime?
-  myClass       ClassSection @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)
-  offerer       User         @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade)
-  taker         User?        @relation("Taker", fields: [takerNim], references: [nim])
-  wantedClass   ClassSection @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
+  myClass       ParallelClass @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)  // Changed from ClassSection
+  offerer       User          @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade)
+  taker         User?         @relation("Taker", fields: [takerNim], references: [nim])
+  wantedClass   ParallelClass @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)  // Changed from ClassSection
 
   @@map("barter_offers")
 }
