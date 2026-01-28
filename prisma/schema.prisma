@@ -1,70 +1,63 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  // NO url line here!
 }
 
 model User {
-  nim              String         @id
-  name             String
-  email            String         @unique
-  role             String         @default("student")
-  
-  enrollments      Enrollment[]
-  offeredBarters   BarterOffer[]  @relation("Offerer")
-  takenBarters     BarterOffer[]  @relation("Taker")
-  
+  nim            String        @id
+  name           String
+  email          String        @unique
+  role           String        @default("student")
+  offeredBarters BarterOffer[] @relation("Offerer")
+  takenBarters   BarterOffer[] @relation("Taker")
+  enrollments    Enrollment[]
+
   @@map("users")
 }
 
 model ClassSection {
-  id               Int            @id @default(autoincrement())
-  courseCode       String
-  courseName       String
-  classCode        String
-  day              String
-  timeStart        String
-  timeEnd          String
-  room             String
-  
-  enrollments      Enrollment[]
-  offeredIn        BarterOffer[]  @relation("MyClass")
-  wantedIn         BarterOffer[]  @relation("WantedClass")
-  
+  id          Int           @id @default(autoincrement())
+  courseCode  String
+  courseName  String
+  classCode   String
+  day         String
+  timeStart   String
+  timeEnd     String
+  room        String
+  offeredIn   BarterOffer[] @relation("MyClass")
+  wantedIn    BarterOffer[] @relation("WantedClass")
+  enrollments Enrollment[]
+
   @@map("class_sections")
 }
 
 model Enrollment {
-  id               Int            @id @default(autoincrement())
-  nim              String
-  classSectionId   Int
-  
-  user             User           @relation(fields: [nim], references: [nim], onDelete: Cascade)
-  classSection     ClassSection   @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
-  
+  id             Int          @id @default(autoincrement())
+  nim            String
+  classSectionId Int
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [nim], references: [nim], onDelete: Cascade)
+
   @@unique([nim, classSectionId])
   @@map("enrollments")
 }
 
 model BarterOffer {
-  id               Int            @id @default(autoincrement())
-  offererNim       String
-  myClassId        Int
-  wantedClassId    Int
-  status           String         @default("open")
-  createdAt        DateTime       @default(now())
-  takerNim         String?
-  completedAt      DateTime?
-  
-  offerer          User           @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade)
-  myClass          ClassSection   @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)
-  wantedClass      ClassSection   @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
-  taker            User?          @relation("Taker", fields: [takerNim], references: [nim], onDelete: SetNull)
-  
+  id            Int          @id @default(autoincrement())
+  offererNim    String
+  myClassId     Int
+  wantedClassId Int
+  status        String       @default("open")
+  createdAt     DateTime     @default(now())
+  takerNim      String?
+  completedAt   DateTime?
+  myClass       ClassSection @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)
+  offerer       User         @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade)
+  taker         User?        @relation("Taker", fields: [takerNim], references: [nim])
+  wantedClass   ClassSection @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
+
   @@map("barter_offers")
 }
