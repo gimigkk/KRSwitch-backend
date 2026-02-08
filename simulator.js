@@ -6,15 +6,15 @@ const API_BASE = process.env.API_BASE || 'http://localhost:5000';
 
 const CONFIG = {
   SIMULATION_ROUNDS: 30,
-  MIN_ACTION_DELAY: 200,
-  MAX_ACTION_DELAY: 1000,
+  MIN_ACTION_DELAY: 50,
+  MAX_ACTION_DELAY: 1500,
   USER_BEHAVIOR_DISTRIBUTION: {
     aggressive: 0.5,   // 20% users are very active
     moderate: 0.5,     // 50% users are moderately active
     passive: 0       // 30% users are passive
   },
   RACE_CONDITION_SIMULATION: true,
-  VERBOSE_LOGGING: true
+  VERBOSE_LOGGING: false
 };
 
 // ==================== UTILITIES ====================
