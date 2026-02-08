@@ -140,7 +140,7 @@ app.get('/api/offers', async (req: any, res) => {
 // POST /api/offers - Create new offer
 app.post('/api/offers', async (req: any, res) => {
   const { myClassId, wantedClassId } = req.body;
-  const offererNim = req.body.offererNim || 'M6401211001'; // Hardcoded for testing
+  const offererNim = req.body.offererNim || 'M6401211002'; // Hardcoded for testing
 
   try {
     // Validate: user is enrolled in myClass

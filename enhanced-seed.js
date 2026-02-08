@@ -1,13 +1,14 @@
-import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+require('dotenv/config');
+const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+const { Pool } = require('pg');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-// Copy from frontend/src/testData.js
+// ==================== USERS DATA ====================
+
 const users = [
   { nim: 'M6401211001', name: 'Ahmad Fauzi', email: 'ahmad@apps.ipb.ac.id', role: 'student' },
   { nim: 'M6401211002', name: 'Budi Santoso', email: 'budi@apps.ipb.ac.id', role: 'student' },
@@ -161,8 +162,10 @@ const users = [
   { nim: 'M6401211150', name: 'Marbot Markibot', email: 'marbot@apps.ipb.ac.id', role: 'student' },
 ];
 
+// ==================== PARALLEL CLASSES ====================
+
 const parallelClasses = [
-  // KOM201 - Basis Data (4 kuliah classes)
+  // KOM201 - Basis Data (4 kuliah)
   { id: 1, courseCode: 'KOM201', courseName: 'Basis Data', classCode: 'K1', day: 'Senin', timeStart: '08:00', timeEnd: '10:00', room: 'FMIPA 1.1' },
   { id: 2, courseCode: 'KOM201', courseName: 'Basis Data', classCode: 'K2', day: 'Selasa', timeStart: '10:00', timeEnd: '12:00', room: 'FMIPA 1.2' },
   { id: 3, courseCode: 'KOM201', courseName: 'Basis Data', classCode: 'K3', day: 'Rabu', timeStart: '13:00', timeEnd: '15:00', room: 'FMIPA 2.1' },
@@ -204,10 +207,10 @@ const parallelClasses = [
   { id: 29, courseCode: 'KOM301', courseName: 'Struktur Data', classCode: 'R3', day: 'Jumat', timeStart: '16:00', timeEnd: '17:00', room: 'FMIPA 7.5' },
 ];
 
-// Copy function from testData.js
+// ==================== FUNCTIONS ====================
+
 function generateEnrollments() {
   const enrollments = [];
-  let enrollmentId = 1;
   
   const courseStructure = {
     'KOM201': { kuliah: [1, 2, 3, 4], praktikum: [], responsi: [] },
@@ -222,29 +225,17 @@ function generateEnrollments() {
     Object.entries(courseStructure).forEach(([courseCode, structure]) => {
       if (structure.kuliah.length > 0) {
         const kuliahClassId = structure.kuliah[userIndex % structure.kuliah.length];
-        enrollments.push({
-          id: enrollmentId++,
-          nim: user.nim,
-          parallelClassId: kuliahClassId
-        });
+        enrollments.push({ nim: user.nim, parallelClassId: kuliahClassId });
       }
       
       if (structure.praktikum.length > 0) {
         const praktikumClassId = structure.praktikum[userIndex % structure.praktikum.length];
-        enrollments.push({
-          id: enrollmentId++,
-          nim: user.nim,
-          parallelClassId: praktikumClassId
-        });
+        enrollments.push({ nim: user.nim, parallelClassId: praktikumClassId });
       }
       
       if (structure.responsi.length > 0) {
         const responsiClassId = structure.responsi[userIndex % structure.responsi.length];
-        enrollments.push({
-          id: enrollmentId++,
-          nim: user.nim,
-          parallelClassId: responsiClassId
-        });
+        enrollments.push({ nim: user.nim, parallelClassId: responsiClassId });
       }
     });
   });
@@ -252,55 +243,152 @@ function generateEnrollments() {
   return enrollments;
 }
 
-const enrollments = generateEnrollments();
+function generateRealisticOffers() {
+  const now = new Date();
+  const offers = [];
+  
+  const daysAgo = (days, hoursOffset = 0) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() - days);
+    date.setHours(date.getHours() - hoursOffset);
+    return date;
+  };
 
-const barterOffers = [
-  { id: 1, offererNim: 'M6401211001', myClassId: 1, wantedClassId: 2, status: 'open', createdAt: '2026-02-01T10:15:00Z', takerNim: null, completedAt: null },
-  { id: 2, offererNim: 'M6401211002', myClassId: 1, wantedClassId: 3, status: 'open', createdAt: '2026-02-01T11:20:00Z', takerNim: null, completedAt: null },
-  { id: 3, offererNim: 'M6401211044', myClassId: 2, wantedClassId: 4, status: 'open', createdAt: '2026-02-02T14:30:00Z', takerNim: null, completedAt: null },
-  { id: 4, offererNim: 'M6401211005', myClassId: 1, wantedClassId: 4, status: 'open', createdAt: '2026-02-02T15:45:00Z', takerNim: null, completedAt: null },
-  { id: 5, offererNim: 'M6401211080', myClassId: 3, wantedClassId: 2, status: 'open', createdAt: '2026-02-02T16:20:00Z', takerNim: null, completedAt: null },
-  { id: 6, offererNim: 'M6401211090', myClassId: 3, wantedClassId: 1, status: 'open', createdAt: '2026-02-02T17:10:00Z', takerNim: null, completedAt: null },
-  { id: 7, offererNim: 'M6401211115', myClassId: 4, wantedClassId: 3, status: 'open', createdAt: '2026-02-02T18:00:00Z', takerNim: null, completedAt: null },
-  { id: 8, offererNim: 'M6401211120', myClassId: 4, wantedClassId: 2, status: 'open', createdAt: '2026-02-02T19:25:00Z', takerNim: null, completedAt: null },
-  { id: 9, offererNim: 'M6401211001', myClassId: 8, wantedClassId: 9, status: 'open', createdAt: '2026-02-02T20:15:00Z', takerNim: null, completedAt: null },
-  { id: 10, offererNim: 'M6401211003', myClassId: 9, wantedClassId: 10, status: 'open', createdAt: '2026-02-02T21:30:00Z', takerNim: null, completedAt: null },
-  { id: 11, offererNim: 'M6401211150', myClassId: 10, wantedClassId: 8, status: 'open', createdAt: '2026-02-02T22:00:00Z', takerNim: null, completedAt: null },
-  { id: 12, offererNim: 'M6401211003', myClassId: 15, wantedClassId: 14, status: 'open', createdAt: '2026-02-02T23:10:00Z', takerNim: null, completedAt: null },
-  { id: 13, offererNim: 'M6401211004', myClassId: 14, wantedClassId: 16, status: 'open', createdAt: '2026-02-03T08:30:00Z', takerNim: null, completedAt: null },
-  { id: 14, offererNim: 'M6401211005', myClassId: 16, wantedClassId: 15, status: 'open', createdAt: '2026-02-03T09:45:00Z', takerNim: null, completedAt: null },
-  { id: 15, offererNim: 'M6401211100', myClassId: 20, wantedClassId: 21, status: 'open', createdAt: '2026-02-03T10:15:00Z', takerNim: null, completedAt: null },
-  { id: 16, offererNim: 'M6401211101', myClassId: 21, wantedClassId: 22, status: 'open', createdAt: '2026-02-03T11:20:00Z', takerNim: null, completedAt: null },
-  { id: 17, offererNim: 'M6401211102', myClassId: 22, wantedClassId: 23, status: 'open', createdAt: '2026-02-03T12:30:00Z', takerNim: null, completedAt: null },
-  { id: 18, offererNim: 'M6401211103', myClassId: 23, wantedClassId: 24, status: 'open', createdAt: '2026-02-03T13:45:00Z', takerNim: null, completedAt: null },
-  { id: 19, offererNim: 'M6401211104', myClassId: 24, wantedClassId: 20, status: 'open', createdAt: '2026-02-03T14:50:00Z', takerNim: null, completedAt: null },
-  { id: 20, offererNim: 'M6401211110', myClassId: 25, wantedClassId: 26, status: 'open', createdAt: '2026-02-03T15:30:00Z', takerNim: null, completedAt: null },
-  { id: 21, offererNim: 'M6401211111', myClassId: 26, wantedClassId: 27, status: 'open', createdAt: '2026-02-03T16:40:00Z', takerNim: null, completedAt: null },
-  { id: 22, offererNim: 'M6401211112', myClassId: 27, wantedClassId: 28, status: 'open', createdAt: '2026-02-03T17:55:00Z', takerNim: null, completedAt: null },
-  { id: 23, offererNim: 'M6401211113', myClassId: 28, wantedClassId: 29, status: 'open', createdAt: '2026-02-03T18:20:00Z', takerNim: null, completedAt: null },
-  { id: 24, offererNim: 'M6401211114', myClassId: 29, wantedClassId: 25, status: 'open', createdAt: '2026-02-03T19:35:00Z', takerNim: null, completedAt: null },
-];
+  // Completed offers (20)
+  offers.push(
+    { offererNim: 'M6401211001', myClassId: 1, wantedClassId: 2, status: 'matched', createdAt: daysAgo(7, 2), takerNim: 'M6401211026', completedAt: daysAgo(7, 1) },
+    { offererNim: 'M6401211044', myClassId: 2, wantedClassId: 4, status: 'matched', createdAt: daysAgo(7, 5), takerNim: 'M6401211069', completedAt: daysAgo(7, 4) },
+    { offererNim: 'M6401211080', myClassId: 3, wantedClassId: 1, status: 'matched', createdAt: daysAgo(6, 8), takerNim: 'M6401211051', completedAt: daysAgo(6, 7) },
+    { offererNim: 'M6401211003', myClassId: 9, wantedClassId: 10, status: 'matched', createdAt: daysAgo(5, 3), takerNim: 'M6401211028', completedAt: daysAgo(5, 1) },
+    { offererNim: 'M6401211150', myClassId: 10, wantedClassId: 8, status: 'matched', createdAt: daysAgo(5, 6), takerNim: 'M6401211075', completedAt: daysAgo(5, 5) },
+    { offererNim: 'M6401211015', myClassId: 8, wantedClassId: 9, status: 'matched', createdAt: daysAgo(4, 10), takerNim: 'M6401211040', completedAt: daysAgo(4, 9) },
+    { offererNim: 'M6401211089', myClassId: 9, wantedClassId: 8, status: 'matched', createdAt: daysAgo(4, 4), takerNim: 'M6401211122', completedAt: daysAgo(4, 3) },
+    { offererNim: 'M6401211005', myClassId: 16, wantedClassId: 14, status: 'matched', createdAt: daysAgo(3, 7), takerNim: 'M6401211030', completedAt: daysAgo(3, 6) },
+    { offererNim: 'M6401211055', myClassId: 14, wantedClassId: 15, status: 'matched', createdAt: daysAgo(3, 2), takerNim: 'M6401211082', completedAt: daysAgo(3, 1) },
+    { offererNim: 'M6401211107', myClassId: 15, wantedClassId: 16, status: 'matched', createdAt: daysAgo(2, 11), takerNim: 'M6401211133', completedAt: daysAgo(2, 10) },
+    { offererNim: 'M6401211100', myClassId: 20, wantedClassId: 21, status: 'matched', createdAt: daysAgo(2, 5), takerNim: 'M6401211025', completedAt: daysAgo(2, 4) },
+    { offererNim: 'M6401211125', myClassId: 21, wantedClassId: 22, status: 'matched', createdAt: daysAgo(2, 1), takerNim: 'M6401211050', completedAt: daysAgo(2, 0.5) },
+    { offererNim: 'M6401211022', myClassId: 23, wantedClassId: 24, status: 'matched', createdAt: daysAgo(1, 18), takerNim: 'M6401211047', completedAt: daysAgo(1, 17) },
+    { offererNim: 'M6401211138', myClassId: 24, wantedClassId: 23, status: 'matched', createdAt: daysAgo(1, 14), takerNim: 'M6401211063', completedAt: daysAgo(1, 13) },
+    { offererNim: 'M6401211110', myClassId: 25, wantedClassId: 26, status: 'matched', createdAt: daysAgo(1, 8), takerNim: 'M6401211135', completedAt: daysAgo(1, 7) },
+    { offererNim: 'M6401211011', myClassId: 27, wantedClassId: 28, status: 'matched', createdAt: daysAgo(1, 3), takerNim: 'M6401211036', completedAt: daysAgo(1, 2) },
+    { offererNim: 'M6401211086', myClassId: 28, wantedClassId: 29, status: 'matched', createdAt: daysAgo(0, 22), takerNim: 'M6401211111', completedAt: daysAgo(0, 21) },
+    { offererNim: 'M6401211143', myClassId: 29, wantedClassId: 27, status: 'matched', createdAt: daysAgo(0, 18), takerNim: 'M6401211068', completedAt: daysAgo(0, 17) },
+    { offererNim: 'M6401211018', myClassId: 3, wantedClassId: 4, status: 'matched', createdAt: daysAgo(0, 14), takerNim: 'M6401211093', completedAt: daysAgo(0, 13) },
+    { offererNim: 'M6401211127', myClassId: 19, wantedClassId: 17, status: 'matched', createdAt: daysAgo(0, 10), takerNim: 'M6401211052', completedAt: daysAgo(0, 9) }
+  );
+
+  // Cancelled offers (8)
+  offers.push(
+    { offererNim: 'M6401211007', myClassId: 1, wantedClassId: 3, status: 'cancelled', createdAt: daysAgo(6, 12), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211062', myClassId: 11, wantedClassId: 13, status: 'cancelled', createdAt: daysAgo(5, 9), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211098', myClassId: 17, wantedClassId: 19, status: 'cancelled', createdAt: daysAgo(4, 15), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211119', myClassId: 20, wantedClassId: 22, status: 'cancelled', createdAt: daysAgo(3, 11), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211034', myClassId: 8, wantedClassId: 10, status: 'cancelled', createdAt: daysAgo(2, 8), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211145', myClassId: 25, wantedClassId: 26, status: 'cancelled', createdAt: daysAgo(1, 16), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211071', myClassId: 14, wantedClassId: 16, status: 'cancelled', createdAt: daysAgo(1, 5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211096', myClassId: 2, wantedClassId: 4, status: 'cancelled', createdAt: daysAgo(0, 12), takerNim: null, completedAt: null }
+  );
+
+  // Open offers (35)
+  offers.push(
+    { offererNim: 'M6401211002', myClassId: 1, wantedClassId: 3, status: 'open', createdAt: daysAgo(0, 8), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211027', myClassId: 1, wantedClassId: 2, status: 'open', createdAt: daysAgo(0, 7), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211052', myClassId: 2, wantedClassId: 4, status: 'open', createdAt: daysAgo(0, 6), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211077', myClassId: 3, wantedClassId: 2, status: 'open', createdAt: daysAgo(0, 5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211102', myClassId: 4, wantedClassId: 1, status: 'open', createdAt: daysAgo(0, 4), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211127', myClassId: 4, wantedClassId: 3, status: 'open', createdAt: daysAgo(0, 3), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211008', myClassId: 8, wantedClassId: 9, status: 'open', createdAt: daysAgo(0, 7.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211033', myClassId: 9, wantedClassId: 10, status: 'open', createdAt: daysAgo(0, 6.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211058', myClassId: 10, wantedClassId: 8, status: 'open', createdAt: daysAgo(0, 5.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211083', myClassId: 8, wantedClassId: 10, status: 'open', createdAt: daysAgo(0, 4.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211108', myClassId: 9, wantedClassId: 8, status: 'open', createdAt: daysAgo(0, 3.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211013', myClassId: 14, wantedClassId: 15, status: 'open', createdAt: daysAgo(0, 7), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211038', myClassId: 15, wantedClassId: 16, status: 'open', createdAt: daysAgo(0, 6), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211063', myClassId: 16, wantedClassId: 14, status: 'open', createdAt: daysAgo(0, 5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211088', myClassId: 14, wantedClassId: 16, status: 'open', createdAt: daysAgo(0, 4), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211113', myClassId: 15, wantedClassId: 14, status: 'open', createdAt: daysAgo(0, 3), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211019', myClassId: 17, wantedClassId: 18, status: 'open', createdAt: daysAgo(0, 6.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211044', myClassId: 18, wantedClassId: 19, status: 'open', createdAt: daysAgo(0, 5.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211069', myClassId: 19, wantedClassId: 17, status: 'open', createdAt: daysAgo(0, 4.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211094', myClassId: 17, wantedClassId: 19, status: 'open', createdAt: daysAgo(0, 3.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211024', myClassId: 20, wantedClassId: 21, status: 'open', createdAt: daysAgo(0, 6), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211049', myClassId: 21, wantedClassId: 22, status: 'open', createdAt: daysAgo(0, 5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211074', myClassId: 22, wantedClassId: 20, status: 'open', createdAt: daysAgo(0, 4), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211099', myClassId: 23, wantedClassId: 24, status: 'open', createdAt: daysAgo(0, 3), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211124', myClassId: 24, wantedClassId: 23, status: 'open', createdAt: daysAgo(0, 2), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211029', myClassId: 25, wantedClassId: 26, status: 'open', createdAt: daysAgo(0, 5.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211054', myClassId: 26, wantedClassId: 25, status: 'open', createdAt: daysAgo(0, 4.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211079', myClassId: 27, wantedClassId: 28, status: 'open', createdAt: daysAgo(0, 3.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211104', myClassId: 28, wantedClassId: 29, status: 'open', createdAt: daysAgo(0, 2.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211129', myClassId: 29, wantedClassId: 27, status: 'open', createdAt: daysAgo(0, 1.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211010', myClassId: 2, wantedClassId: 1, status: 'open', createdAt: daysAgo(0, 2), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211035', myClassId: 11, wantedClassId: 12, status: 'open', createdAt: daysAgo(0, 1.8), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211060', myClassId: 12, wantedClassId: 13, status: 'open', createdAt: daysAgo(0, 1.5), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211085', myClassId: 13, wantedClassId: 11, status: 'open', createdAt: daysAgo(0, 1.2), takerNim: null, completedAt: null },
+    { offererNim: 'M6401211115', myClassId: 18, wantedClassId: 17, status: 'open', createdAt: daysAgo(0, 1), takerNim: null, completedAt: null }
+  );
+
+  return offers;
+}
+
+// ==================== MAIN FUNCTION ====================
 
 async function importData() {
-  console.log('Importing users...');
+  console.log('🧹 Cleaning existing data...');
+  
+  await prisma.barterOffer.deleteMany({});
+  await prisma.enrollment.deleteMany({});
+  await prisma.parallelClass.deleteMany({});
+  await prisma.user.deleteMany({});
+  
+  console.log('✨ Importing fresh data...\n');
+  
+  console.log(`📝 Importing ${users.length} users...`);
   await prisma.user.createMany({ data: users });
   
-  console.log('Importing classes...');
+  console.log(`🏫 Importing ${parallelClasses.length} parallel classes...`);
   await prisma.parallelClass.createMany({ data: parallelClasses });
   
-  console.log('Importing enrollments...');
-  for (const e of enrollments) {
-    await prisma.enrollment.create({
-      data: { nim: e.nim, parallelClassId: e.parallelClassId }
-    });
+  console.log(`📚 Generating enrollments...`);
+  const enrollments = generateEnrollments();
+  console.log(`📋 Importing ${enrollments.length} enrollments...`);
+  
+  for (const enrollment of enrollments) {
+    await prisma.enrollment.create({ data: enrollment });
   }
   
-  console.log('Importing offers...');
-  await prisma.barterOffer.createMany({ data: barterOffers });
+  console.log(`🔄 Generating realistic barter offers...`);
+  const offers = generateRealisticOffers();
   
-  console.log('Done');
+  const offerStats = {
+    matched: offers.filter(o => o.status === 'matched').length,
+    cancelled: offers.filter(o => o.status === 'cancelled').length,
+    open: offers.filter(o => o.status === 'open').length
+  };
+  
+  console.log(`💼 Importing ${offers.length} offers (${offerStats.matched} matched, ${offerStats.cancelled} cancelled, ${offerStats.open} open)...`);
+  
+  for (const offer of offers) {
+    await prisma.barterOffer.create({ data: offer });
+  }
+  
+  console.log('\n✅ Data import complete!');
+  console.log('\n📊 Summary:');
+  console.log(`   Users: ${users.length}`);
+  console.log(`   Classes: ${parallelClasses.length}`);
+  console.log(`   Enrollments: ${enrollments.length}`);
+  console.log(`   Total Offers: ${offers.length}`);
+  console.log(`     - Matched: ${offerStats.matched}`);
+  console.log(`     - Cancelled: ${offerStats.cancelled}`);
+  console.log(`     - Open: ${offerStats.open}`);
+  
   await prisma.$disconnect();
   await pool.end();
 }
 
-importData();
+importData()
+  .catch((error) => {
+    console.error('❌ Import failed:', error);
+    process.exit(1);
+  });
