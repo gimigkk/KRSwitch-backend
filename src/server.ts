@@ -70,7 +70,7 @@ app.get('/api/me', async (req: any, res) => {
   try {
     // Hardcoded for testing - replace with authenticate middleware later
     const user = await prisma.user.findUnique({
-      where: { nim: 'M6401211001' },
+      where: { nim: 'M6401211002' },
       select: { nim: true, name: true, email: true }
     });
     
@@ -193,14 +193,12 @@ app.post('/api/offers', async (req: any, res) => {
 });
 
 // POST /api/offers/:id/take - Take an offer (RACE CONDITION PROTECTED)
-app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
+app.post('/api/offers/:id/take', async (req: any, res) => {
   const offerId = parseInt(req.params.id);
-  const takerNim = req.user.nim;
+  const takerNim = req.body.takerNim;
 
   try {
-    // Use transaction with row locking
     const result = await prisma.$transaction(async (tx) => {
-      // Lock and fetch offer
       const offer = await tx.barterOffer.findUnique({
         where: { id: offerId },
         include: { myClass: true, wantedClass: true }
@@ -210,13 +208,11 @@ app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
       if (offer.status !== 'open') throw new Error('Offer already taken');
       if (offer.offererNim === takerNim) throw new Error('Cannot take your own offer');
 
-      // Validate taker is enrolled in wanted class
       const takerEnrollment = await tx.enrollment.findFirst({
         where: { nim: takerNim, parallelClassId: offer.wantedClassId }
       });
       if (!takerEnrollment) throw new Error('You are not enrolled in the wanted class');
 
-      // Update offer
       await tx.barterOffer.update({
         where: { id: offerId },
         data: { 
@@ -226,7 +222,6 @@ app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
         }
       });
 
-      // Swap enrollments
       await tx.enrollment.updateMany({
         where: { nim: offer.offererNim, parallelClassId: offer.myClassId },
         data: { parallelClassId: offer.wantedClassId }
@@ -240,8 +235,13 @@ app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
       return offer;
     });
 
-    // Broadcast success
     io.emit('offer-taken', { offerId });
+    io.emit('enrollments-swapped', {
+      swaps: [
+        { nim: result.offererNim, oldClassId: result.myClassId, newClassId: result.wantedClassId },
+        { nim: takerNim, oldClassId: result.wantedClassId, newClassId: result.myClassId }
+      ]
+    });
     io.to(`user-${result.offererNim}`).emit('barter-success', { offerId, takerNim });
     io.to(`user-${takerNim}`).emit('barter-success', { offerId, offererNim: result.offererNim });
 
@@ -249,7 +249,6 @@ app.post('/api/offers/:id/take', authenticate, async (req: any, res) => {
   } catch (error: any) {
     console.error('Take offer error:', error);
     
-    // Send failure to client
     io.to(`user-${takerNim}`).emit('barter-failed', { 
       offerId, 
       reason: error.message 
