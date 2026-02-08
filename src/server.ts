@@ -1,4 +1,3 @@
-// server.ts
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -51,6 +50,72 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'KRSwitch Backend Running' });
 });
 
+// ===== USER ENDPOINTS =====
+
+// GET /api/users - Get all users
+app.get('/api/users', async (req: any, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: { nim: true, name: true, email: true }
+    });
+    res.json(users);
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// GET /api/me - Get current user (for testing, hardcoded)
+app.get('/api/me', async (req: any, res) => {
+  try {
+    // Hardcoded for testing - replace with authenticate middleware later
+    const user = await prisma.user.findUnique({
+      where: { nim: 'M6401211001' },
+      select: { nim: true, name: true, email: true }
+    });
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    console.error('Get current user error:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// ===== CLASS ENDPOINTS =====
+
+// GET /api/classes - Get all parallel classes
+app.get('/api/classes', async (req: any, res) => {
+  try {
+    const classes = await prisma.parallelClass.findMany({
+      orderBy: [
+        { courseCode: 'asc' },
+        { classCode: 'asc' }
+      ]
+    });
+    res.json(classes);
+  } catch (error) {
+    console.error('Get classes error:', error);
+    res.status(500).json({ error: 'Failed to fetch classes' });
+  }
+});
+
+// ===== ENROLLMENT ENDPOINTS =====
+
+// GET /api/enrollments - Get all enrollments
+app.get('/api/enrollments', async (req: any, res) => {
+  try {
+    const enrollments = await prisma.enrollment.findMany();
+    res.json(enrollments);
+  } catch (error) {
+    console.error('Get enrollments error:', error);
+    res.status(500).json({ error: 'Failed to fetch enrollments' });
+  }
+});
+
 // ===== BARTER ENDPOINTS =====
 
 // GET /api/offers - Get all open offers
@@ -75,7 +140,7 @@ app.get('/api/offers', async (req: any, res) => {
 // POST /api/offers - Create new offer
 app.post('/api/offers', async (req: any, res) => {
   const { myClassId, wantedClassId } = req.body;
-  const offererNim = req.body.offererNim || 'M6401211001'; // Hardcoded for testing, Ingetin buat ganti dengan req.user.nim
+  const offererNim = req.body.offererNim || 'M6401211001'; // Hardcoded for testing
 
   try {
     // Validate: user is enrolled in myClass
