@@ -21,13 +21,15 @@ const prisma = new PrismaClient({ adapter });
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: 'http://localhost:5173',
     methods: ['GET', 'POST']
   }
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173'
+}));
 app.use(express.json());
 
 // Auth middleware
@@ -52,7 +54,7 @@ app.get('/health', (req, res) => {
 // ===== BARTER ENDPOINTS =====
 
 // GET /api/offers - Get all open offers
-app.get('/api/offers', authenticate, async (req: any, res) => {
+app.get('/api/offers', async (req: any, res) => {
   try {
     const offers = await prisma.barterOffer.findMany({
       where: { status: 'open' },
@@ -71,9 +73,9 @@ app.get('/api/offers', authenticate, async (req: any, res) => {
 });
 
 // POST /api/offers - Create new offer
-app.post('/api/offers', authenticate, async (req: any, res) => {
+app.post('/api/offers', async (req: any, res) => {
   const { myClassId, wantedClassId } = req.body;
-  const offererNim = req.user.nim;
+  const offererNim = req.body.offererNim || 'M6401211001'; // Hardcoded for testing, Ingetin buat ganti dengan req.user.nim
 
   try {
     // Validate: user is enrolled in myClass
