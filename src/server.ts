@@ -164,7 +164,7 @@ app.post('/api/offers', async (req: any, res) => {
     }
 
     if (myClass.classCode[0] !== wantedClass.classCode[0]) {
-      return res.status(400).json({ error: 'Must be same type (K↔K, P↔P, R↔R)' });
+      return res.status(400).json({ error: 'Must be same type (K⇌K, P⇌P, R⇌R)' });
     }
 
     // Create offer
