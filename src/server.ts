@@ -6,7 +6,6 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
-import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
 dotenv.config();
@@ -22,18 +21,13 @@ const prisma = new PrismaClient({ adapter });
 const io = new Server(server, {
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST', 'DELETE']
   }
 });
 
 // Middleware
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json());
-
-// ===== TYPES =====
-interface AuthRequest extends express.Request {
-  user?: { nim: string; name: string; email: string };
-}
 
 // ===== VALIDATION SCHEMAS =====
 const createOfferSchema = z.object({
@@ -48,18 +42,6 @@ const takeOfferSchema = z.object({
 });
 
 // ===== MIDDLEWARE =====
-const authenticate = (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET!) as any;
-    next();
-  } catch (error) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-};
-
 // Validation middleware
 const validate = (schema: z.ZodSchema) => {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -100,9 +82,8 @@ app.get('/api/users', asyncHandler(async (req: express.Request, res: express.Res
   res.json(users);
 }));
 
-// GET /api/me
-app.get('/api/me', asyncHandler(async (req: AuthRequest, res: express.Response) => {
-  // Hardcoded for testing - replace with authenticate middleware in production
+// GET /api/me - Hardcoded for testing
+app.get('/api/me', asyncHandler(async (req: express.Request, res: express.Response) => {
   const user = await prisma.user.findUnique({
     where: { nim: 'M6401211001' },
     select: { nim: true, name: true, email: true }
@@ -144,7 +125,7 @@ app.get('/api/offers', asyncHandler(async (req: express.Request, res: express.Re
 }));
 
 // POST /api/offers
-app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: AuthRequest, res: express.Response) => {
+app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
   const { myClassId, wantedClassId } = req.body;
   const offererNim = req.body.offererNim || 'M6401211001'; // Hardcoded for testing
 
@@ -192,7 +173,7 @@ app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: Au
 }));
 
 // POST /api/offers/:id/take
-app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (req: AuthRequest, res: express.Response) => {
+app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
   const offerId = parseInt(req.params.id as string);
   const { takerNim } = req.body;
 
@@ -247,9 +228,9 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
 }));
 
 // DELETE /api/offers/:id
-app.delete('/api/offers/:id', authenticate, asyncHandler(async (req: AuthRequest, res: express.Response) => {
+app.delete('/api/offers/:id', asyncHandler(async (req: express.Request, res: express.Response) => {
   const offerId = parseInt(req.params.id as string);
-  const userNim = req.user!.nim;
+  const userNim = 'M6401211001'; // Hardcoded for testing - your friend will add real auth later
 
   const offer = await prisma.barterOffer.findUnique({ where: { id: offerId } });
   
@@ -270,7 +251,8 @@ app.delete('/api/offers/:id', authenticate, asyncHandler(async (req: AuthRequest
     data: { status: 'cancelled' }
   });
 
-  io.emit('offer-cancelled', { offerId });
+  // Reuse 'offer-taken' event for consistency with frontend
+  io.emit('offer-taken', { offerId });
 
   res.json({ message: 'Offer cancelled' });
 }));
