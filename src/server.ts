@@ -104,7 +104,7 @@ app.get('/api/users', asyncHandler(async (req: express.Request, res: express.Res
 app.get('/api/me', asyncHandler(async (req: AuthRequest, res: express.Response) => {
   // Hardcoded for testing - replace with authenticate middleware in production
   const user = await prisma.user.findUnique({
-    where: { nim: 'M6401211002' },
+    where: { nim: 'M6401211001' },
     select: { nim: true, name: true, email: true }
   });
   
@@ -146,7 +146,7 @@ app.get('/api/offers', asyncHandler(async (req: express.Request, res: express.Re
 // POST /api/offers
 app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: AuthRequest, res: express.Response) => {
   const { myClassId, wantedClassId } = req.body;
-  const offererNim = req.body.offererNim || 'M6401211002'; // Hardcoded for testing
+  const offererNim = req.body.offererNim || 'M6401211001'; // Hardcoded for testing
 
   // Validate: user is enrolled in myClass
   const enrollment = await prisma.enrollment.findFirst({
