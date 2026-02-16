@@ -1,19 +1,17 @@
 {
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
     "moduleResolution": "node",
-    "types": ["node"],
-    "target": "ES2020",
-    "module": "CommonJS",
-    "rootDir": "src",
-    "outDir": "dist",
-
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true,
-
-    "strict": false,
     "skipLibCheck": true,
-
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
   },
-  "include": ["src", "import-test-data.js"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
