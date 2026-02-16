@@ -295,8 +295,15 @@ app.delete('/api/offers/:id', authenticate, async (req: any, res) => {
 
 // ===== WEBSOCKET EVENTS =====
 
+// Track online users
+let onlineUsers = 0;
+
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  onlineUsers++;
+  console.log('User connected:', socket.id, `(${onlineUsers} online)`);
+  
+  // Broadcast updated online count to all clients
+  io.emit('online-count', onlineUsers);
 
   // Join user-specific room for private messages
   socket.on('authenticate', (nim: string) => {
@@ -305,7 +312,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    onlineUsers--;
+    console.log('User disconnected:', socket.id, `(${onlineUsers} online)`);
+    
+    // Broadcast updated online count to all clients
+    io.emit('online-count', onlineUsers);
   });
 });
 
