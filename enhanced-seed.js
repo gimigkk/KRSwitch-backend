@@ -221,11 +221,13 @@ const COURSE_STRUCTURE = {
 // Fast lookup: classId -> class object
 const PC = Object.fromEntries(parallelClasses.map(c => [c.id, c]));
 
+// Fast lookup: nim -> user object
+const USER_MAP = Object.fromEntries(users.map(u => [u.nim, u]));
+
 /**
  * MUTABLE ENROLLMENT STATE: nim -> Set<classId>
- * This is the single source of truth. Initialised from deterministic
- * modulo assignment, then evolved by matched swaps. The final state is
- * what gets written to the `enrollments` table.
+ * Single source of truth. Initialised from deterministic modulo assignment,
+ * evolved by matched swaps, then written to the enrollments table.
  */
 const state = {};
 users.forEach((u, idx) => {
@@ -238,41 +240,42 @@ users.forEach((u, idx) => {
 });
 
 /**
- * True if adding `classId` to nim's schedule (after removing `excludeId`)
- * would overlap any existing enrollment.
- * Overlap formula: A.start < B.end && B.start < A.end (half-open intervals).
+ * Returns conflict info if adding classId to nim's schedule (excluding excludeId)
+ * would overlap any existing enrollment. Returns null if no conflict.
+ * Overlap: A.start < B.end && B.start < A.end (half-open intervals).
  * String comparison is safe — times are always zero-padded "HH:MM".
  */
 function hasConflict(nim, classId, excludeId = null) {
   const pc = PC[classId];
   for (const id of state[nim]) {
     if (id === excludeId || id === classId) continue;
-    const o = PC[id];
-    if (o.day === pc.day && o.timeStart < pc.timeEnd && pc.timeStart < o.timeEnd) {
-      return { conflictId: id, conflictClass: o };
+    const other = PC[id];
+    if (other.day === pc.day && other.timeStart < pc.timeEnd && pc.timeStart < other.timeEnd) {
+      return { conflictId: id, conflictClass: other };
     }
   }
   return null;
 }
 
 const now = new Date();
-/** Returns a Date object `days` days and `hours` hours before now. */
+
+// Returns a Date object `days` days and `hours` hours before now
 const ago = (days, hours = 0) =>
   new Date(now.getTime() - (days * 86400 + hours * 3600) * 1000);
 
-/** All barter offer records. Built up by the simulation functions below. */
+// All barter offer records, built by simulation functions below
 const offerRecords = [];
 
-/** NIMs that have already participated in an offer (any status). */
+// NIMs that have already participated in any offer
 const usedNims = new Set();
 
 // ==================== CORE SIMULATION FUNCTIONS ====================
 
 /**
  * Finds and executes a matched swap between classAId and classBId.
- * Scans users to find: an offerer enrolled in A who can safely receive B,
- * and a taker enrolled in B who can safely receive A.
- * Mutates `state` on success. Returns [offererNim, takerNim] or null.
+ * Scans users for a valid offerer (enrolled in A, can receive B) and
+ * a valid taker (enrolled in B, can receive A). Mutates state on success.
+ * Returns [offererNim, takerNim] or null if no valid pair found.
  *
  * allowReuse: if true, lets already-used NIMs participate (for high-volume).
  */
@@ -288,7 +291,6 @@ function findAndExecuteSwap(classAId, classBId, createdAt, completedAt, allowReu
       if (!state[taker.nim].has(classBId)) continue;
       if (hasConflict(taker.nim, classAId, classBId)) continue;
 
-      // Valid pair found — execute the swap
       state[offerer.nim].delete(classAId);
       state[offerer.nim].add(classBId);
       state[taker.nim].delete(classBId);
@@ -307,7 +309,7 @@ function findAndExecuteSwap(classAId, classBId, createdAt, completedAt, allowReu
         completedAt,
       });
 
-      console.log(`  ✅ MATCHED: ${offerer.name} (class ${classAId}) ↔ ${taker.name} (class ${classBId})`);
+      console.log(`MATCHED: ${offerer.name} (class ${classAId}) <-> ${taker.name} (class ${classBId})`);
       return [offerer.nim, taker.nim];
     }
   }
@@ -315,10 +317,9 @@ function findAndExecuteSwap(classAId, classBId, createdAt, completedAt, allowReu
 }
 
 /**
- * Finds a user enrolled in one of `possibleMyClassIds` and creates a
- * cancelled offer for them wanting `wantedClassId`.
- * Does NOT mutate state (cancelled = no swap happened).
- * Returns the offererNim or null.
+ * Finds a user enrolled in one of possibleMyClassIds and creates a cancelled
+ * offer for them wanting wantedClassId. Does not mutate state.
+ * Returns offererNim or null.
  */
 function findAndAddCancelledOffer(possibleMyClassIds, wantedClassId, createdAt) {
   for (const user of users) {
@@ -337,9 +338,9 @@ function findAndAddCancelledOffer(possibleMyClassIds, wantedClassId, createdAt) 
         completedAt: null,
       });
 
-      const pc = PC[myClassId];
+      const pc  = PC[myClassId];
       const wpc = PC[wantedClassId];
-      console.log(`  🚫 CANCELLED: ${user.name} offered ${pc.courseCode}-${pc.classCode} → wanted ${wpc.courseCode}-${wpc.classCode}`);
+      console.log(`CANCELLED: ${user.name} offered ${pc.courseCode}-${pc.classCode} -> wanted ${wpc.courseCode}-${wpc.classCode}`);
       return user.nim;
     }
   }
@@ -347,10 +348,9 @@ function findAndAddCancelledOffer(possibleMyClassIds, wantedClassId, createdAt) 
 }
 
 /**
- * Finds a user enrolled in one of `possibleMyClassIds` who can validly want
- * `wantedClassId` (no schedule conflict if they hypothetically received it),
- * and creates an open offer for them.
- * Does NOT mutate state (open offer = pending swap).
+ * Finds a user enrolled in one of possibleMyClassIds who can validly want
+ * wantedClassId (no schedule conflict after hypothetically receiving it),
+ * and creates an open offer. Does not mutate state.
  * Returns offererNim or null.
  */
 function findAndAddOpenOffer(possibleMyClassIds, wantedClassId, createdAt) {
@@ -358,7 +358,6 @@ function findAndAddOpenOffer(possibleMyClassIds, wantedClassId, createdAt) {
     if (usedNims.has(user.nim)) continue;
     for (const myClassId of possibleMyClassIds) {
       if (!state[user.nim].has(myClassId)) continue;
-      // The wantedClass must not conflict with other classes (excluding myClass)
       if (hasConflict(user.nim, wantedClassId, myClassId)) continue;
 
       usedNims.add(user.nim);
@@ -372,9 +371,9 @@ function findAndAddOpenOffer(possibleMyClassIds, wantedClassId, createdAt) {
         completedAt: null,
       });
 
-      const pc = PC[myClassId];
+      const pc  = PC[myClassId];
       const wpc = PC[wantedClassId];
-      console.log(`  📬 OPEN: ${user.name} offering ${pc.courseCode}-${pc.classCode} → wants ${wpc.courseCode}-${wpc.classCode}`);
+      console.log(`OPEN: ${user.name} offering ${pc.courseCode}-${pc.classCode} -> wants ${wpc.courseCode}-${wpc.classCode}`);
       return user.nim;
     }
   }
@@ -382,141 +381,128 @@ function findAndAddOpenOffer(possibleMyClassIds, wantedClassId, createdAt) {
 }
 
 // ==================== GENERATE MATCHED SWAPS (20) ====================
-// Spread across all courses and session types, across a 7-day window.
-// Each swap pair is found algorithmically — zero hardcoding against state.
 
-console.log('\n🔄 Generating MATCHED swaps...');
+console.log('\n--- Generating matched swaps ---');
 
-// KOM201 - Basis Data (lecture swaps)
-findAndExecuteSwap(1, 2, ago(7, 2),  ago(7, 1));   // K1 ↔ K2
-findAndExecuteSwap(3, 4, ago(7, 5),  ago(7, 4));   // K3 ↔ K4
-findAndExecuteSwap(2, 3, ago(6, 8),  ago(6, 7));   // K2 ↔ K3
-findAndExecuteSwap(4, 1, ago(6, 3),  ago(6, 2));   // K4 ↔ K1
-findAndExecuteSwap(1, 3, ago(5, 6),  ago(5, 5));   // K1 ↔ K3
+// KOM201 - Basis Data
+findAndExecuteSwap(1, 2, ago(7, 2),  ago(7, 1));
+findAndExecuteSwap(3, 4, ago(7, 5),  ago(7, 4));
+findAndExecuteSwap(2, 3, ago(6, 8),  ago(6, 7));
+findAndExecuteSwap(4, 1, ago(6, 3),  ago(6, 2));
+findAndExecuteSwap(1, 3, ago(5, 6),  ago(5, 5));
 
-// KOM202 - Algoritma dan Pemrograman (lecture swaps)
-// NOTE: (5,6) is structurally impossible — all K1 holders also hold STA205 K1 (Tue 13-15 = class 6's timeslot)
-findAndExecuteSwap(5, 7, ago(5, 3),  ago(5, 2));   // K1 ↔ K3
-findAndExecuteSwap(7, 5, ago(4, 10), ago(4, 9));   // K3 ↔ K1 (different pair)
+// KOM202 - Lecture
+// NOTE: (5,6) impossible — K1 holders also hold STA205 K1 (Tue 13-15) which conflicts with K2
+findAndExecuteSwap(5, 7, ago(5, 3),  ago(5, 2));
+findAndExecuteSwap(7, 5, ago(4, 10), ago(4, 9));
 
-// KOM202 - Praktikum swaps
-findAndExecuteSwap(8, 9,  ago(4, 4),  ago(4, 3));  // P1 ↔ P2
-findAndExecuteSwap(10, 8, ago(3, 7),  ago(3, 6));  // P3 ↔ P1
+// KOM202 - Praktikum
+findAndExecuteSwap(8, 9,  ago(4, 4),  ago(4, 3));
+findAndExecuteSwap(10, 8, ago(3, 7),  ago(3, 6));
 
-// MAT203 - Aljabar Linear (lecture swaps)
-findAndExecuteSwap(11, 12, ago(3, 2), ago(3, 1));  // K1 ↔ K2
-findAndExecuteSwap(13, 11, ago(2, 9), ago(2, 8));  // K3 ↔ K1
+// MAT203 - Lecture
+findAndExecuteSwap(11, 12, ago(3, 2), ago(3, 1));
+findAndExecuteSwap(13, 11, ago(2, 9), ago(2, 8));
 
-// MAT203 - Responsi swaps
-// NOTE: class 14 (Wed 15-16) CANNOT be received by class 15 or 16 holders — they all hold
-// STA205 K2 (class 21, Wed 15-17) which creates an overlap. Only R2↔R3 is bilaterally valid.
-findAndExecuteSwap(15, 16, ago(2, 5), ago(2, 4));  // R2 ↔ R3
-findAndExecuteSwap(16, 15, ago(2, 1), ago(1, 23)); // R3 ↔ R2 (different pair)
+// MAT203 - Responsi
+// NOTE: class 14 (Wed 15-16) cannot be received by R2/R3 holders — STA205 K2 (Wed 15-17) overlaps
+findAndExecuteSwap(15, 16, ago(2, 5), ago(2, 4));
+findAndExecuteSwap(16, 15, ago(2, 1), ago(1, 23));
 
-// FIS204 - Fisika Komputasi
-findAndExecuteSwap(17, 18, ago(1, 20), ago(1, 19)); // K1 ↔ K2
-findAndExecuteSwap(19, 17, ago(1, 15), ago(1, 14)); // K3 ↔ K1
-findAndExecuteSwap(18, 19, ago(1, 10), ago(1, 9));  // K2 ↔ K3
+// FIS204
+findAndExecuteSwap(17, 18, ago(1, 20), ago(1, 19));
+findAndExecuteSwap(19, 17, ago(1, 15), ago(1, 14));
+findAndExecuteSwap(18, 19, ago(1, 10), ago(1, 9));
 
-// STA205 - Statistika (lecture + lab swaps)
-// NOTE: (20,21) is impossible — K1 holders also hold MAT203 R1 (class 14, Wed 15-16)
-// which conflicts with K2 (class 21, Wed 15-17). Use K1↔K3 instead.
-findAndExecuteSwap(20, 22, ago(1, 6),  ago(1, 5));  // K1 ↔ K3
-findAndExecuteSwap(23, 24, ago(0, 20), ago(0, 19)); // P1 ↔ P2
+// STA205
+// NOTE: (20,21) impossible — K1 holders have MAT203 R1 (Wed 15-16) which conflicts with K2 (Wed 15-17)
+findAndExecuteSwap(20, 22, ago(1, 6),  ago(1, 5));
+findAndExecuteSwap(23, 24, ago(0, 20), ago(0, 19));
 
-// KOM301 - Struktur Data (lecture + responsi)
-findAndExecuteSwap(25, 26, ago(0, 14), ago(0, 13)); // K1 ↔ K2
-findAndExecuteSwap(27, 28, ago(0, 8),  ago(0, 7));  // R1 ↔ R2
+// KOM301
+findAndExecuteSwap(25, 26, ago(0, 14), ago(0, 13));
+findAndExecuteSwap(27, 28, ago(0, 8),  ago(0, 7));
 
 // ==================== GENERATE CANCELLED OFFERS (8) ====================
-// These represent offers that were opened but later cancelled before matching.
 
-console.log('\n🚫 Generating CANCELLED offers...');
+console.log('\n--- Generating cancelled offers ---');
 
-findAndAddCancelledOffer([1, 2],     3,  ago(6, 12));  // KOM201 K1 or K2 → K3
-findAndAddCancelledOffer([11, 12],   13, ago(5, 9));   // MAT203 K1 or K2 → K3
-findAndAddCancelledOffer([17, 18],   19, ago(4, 15));  // FIS204 K1 or K2 → K3
-findAndAddCancelledOffer([20, 21],   22, ago(3, 11));  // STA205 K1 or K2 → K3
-findAndAddCancelledOffer([8, 9],     10, ago(2, 8));   // KOM202 P1 or P2 → P3
-findAndAddCancelledOffer([25],       26, ago(1, 16));  // KOM301 K1 → K2
-findAndAddCancelledOffer([14, 15],   16, ago(1, 5));   // MAT203 R1 or R2 → R3
-findAndAddCancelledOffer([2, 3],     4,  ago(0, 12));  // KOM201 K2 or K3 → K4
+findAndAddCancelledOffer([1, 2],   3,  ago(6, 12));
+findAndAddCancelledOffer([11, 12], 13, ago(5, 9));
+findAndAddCancelledOffer([17, 18], 19, ago(4, 15));
+findAndAddCancelledOffer([20, 21], 22, ago(3, 11));
+findAndAddCancelledOffer([8, 9],   10, ago(2, 8));
+findAndAddCancelledOffer([25],     26, ago(1, 16));
+findAndAddCancelledOffer([14, 15], 16, ago(1, 5));
+findAndAddCancelledOffer([2, 3],   4,  ago(0, 12));
 
 // ==================== GENERATE OPEN OFFERS (35) ====================
-// Open offers are the most important for the live UI. They must:
-//   1. Offerer is currently enrolled in myClassId (from current state)
-//   2. wantedClassId does NOT conflict with offerer's other classes
-// Both conditions are enforced by findAndAddOpenOffer().
 
-console.log('\n📬 Generating OPEN offers...');
+console.log('\n--- Generating open offers ---');
 
-// KOM201 - 6 open offers spread across all class pairs
-findAndAddOpenOffer([1],     2,  ago(0, 8.0));
-findAndAddOpenOffer([1],     3,  ago(0, 7.5));
-findAndAddOpenOffer([2],     4,  ago(0, 7.0));
-findAndAddOpenOffer([3],     2,  ago(0, 6.5));
-findAndAddOpenOffer([4],     1,  ago(0, 6.0));
-findAndAddOpenOffer([4],     3,  ago(0, 5.5));
+// KOM201
+findAndAddOpenOffer([1], 2, ago(0, 8.0));
+findAndAddOpenOffer([1], 3, ago(0, 7.5));
+findAndAddOpenOffer([2], 4, ago(0, 7.0));
+findAndAddOpenOffer([3], 2, ago(0, 6.5));
+findAndAddOpenOffer([4], 1, ago(0, 6.0));
+findAndAddOpenOffer([4], 3, ago(0, 5.5));
 
-// KOM202 Lecture - 4 open offers
-// NOTE: [5]→6 is impossible (same structural conflict as matched swap above — use 7 instead)
-findAndAddOpenOffer([5],     7,  ago(0, 7.5));
-findAndAddOpenOffer([6],     7,  ago(0, 7.0));
-findAndAddOpenOffer([7],     5,  ago(0, 6.5));
-findAndAddOpenOffer([7],     6,  ago(0, 6.0));
+// KOM202 - Lecture
+// NOTE: [5]->6 impossible (same conflict as matched swap above)
+findAndAddOpenOffer([5], 7, ago(0, 7.5));
+findAndAddOpenOffer([6], 7, ago(0, 7.0));
+findAndAddOpenOffer([7], 5, ago(0, 6.5));
+findAndAddOpenOffer([7], 6, ago(0, 6.0));
 
-// KOM202 Praktikum - 4 open offers
-findAndAddOpenOffer([8],     9,  ago(0, 7.5));
-findAndAddOpenOffer([9],     10, ago(0, 7.0));
-findAndAddOpenOffer([10],    8,  ago(0, 6.0));
-findAndAddOpenOffer([8],     10, ago(0, 5.5));
+// KOM202 - Praktikum
+findAndAddOpenOffer([8],  9,  ago(0, 7.5));
+findAndAddOpenOffer([9],  10, ago(0, 7.0));
+findAndAddOpenOffer([10], 8,  ago(0, 6.0));
+findAndAddOpenOffer([8],  10, ago(0, 5.5));
 
-// MAT203 Lecture - 3 open offers
-findAndAddOpenOffer([11],    12, ago(0, 7.0));
-findAndAddOpenOffer([12],    13, ago(0, 6.0));
-findAndAddOpenOffer([13],    11, ago(0, 5.0));
+// MAT203 - Lecture
+findAndAddOpenOffer([11], 12, ago(0, 7.0));
+findAndAddOpenOffer([12], 13, ago(0, 6.0));
+findAndAddOpenOffer([13], 11, ago(0, 5.0));
 
-// MAT203 Responsi - 4 open offers
-// NOTE: [16]→14 is impossible — R3 holders have STA205 K2 (class 21, Wed 15-17) which conflicts
-// with receiving class 14 (Wed 15-16). [14]→15 is valid from offerer's side but hard to match.
-findAndAddOpenOffer([14],    15, ago(0, 7.0));
-findAndAddOpenOffer([15],    16, ago(0, 6.0));
-findAndAddOpenOffer([16],    15, ago(0, 5.0));
-findAndAddOpenOffer([14],    16, ago(0, 4.0));
+// MAT203 - Responsi
+// NOTE: [16]->14 impossible — R3 holders have STA205 K2 (Wed 15-17) which conflicts with class 14 (Wed 15-16)
+findAndAddOpenOffer([14], 15, ago(0, 7.0));
+findAndAddOpenOffer([15], 16, ago(0, 6.0));
+findAndAddOpenOffer([16], 15, ago(0, 5.0));
+findAndAddOpenOffer([14], 16, ago(0, 4.0));
 
-// FIS204 - 4 open offers
-findAndAddOpenOffer([17],    18, ago(0, 6.5));
-findAndAddOpenOffer([18],    19, ago(0, 5.5));
-findAndAddOpenOffer([19],    17, ago(0, 4.5));
-findAndAddOpenOffer([17],    19, ago(0, 3.5));
+// FIS204
+findAndAddOpenOffer([17], 18, ago(0, 6.5));
+findAndAddOpenOffer([18], 19, ago(0, 5.5));
+findAndAddOpenOffer([19], 17, ago(0, 4.5));
+findAndAddOpenOffer([17], 19, ago(0, 3.5));
 
-// STA205 Lecture - 3 open offers
-// NOTE: [20]→21 is impossible — K1 holders have MAT203 R1 (class 14, Wed 15-16)
-// which conflicts with K2 (class 21, Wed 15-17). Use K3 instead.
-findAndAddOpenOffer([20],    22, ago(0, 6.0));
-findAndAddOpenOffer([21],    22, ago(0, 5.0));
-findAndAddOpenOffer([22],    20, ago(0, 4.0));
+// STA205 - Lecture
+// NOTE: [20]->21 impossible — K1 holders have MAT203 R1 (Wed 15-16) conflicts with K2 (Wed 15-17)
+findAndAddOpenOffer([20], 22, ago(0, 6.0));
+findAndAddOpenOffer([21], 22, ago(0, 5.0));
+findAndAddOpenOffer([22], 20, ago(0, 4.0));
 
-// STA205 Praktikum - 2 open offers
-findAndAddOpenOffer([23],    24, ago(0, 3.0));
-findAndAddOpenOffer([24],    23, ago(0, 2.0));
+// STA205 - Praktikum
+findAndAddOpenOffer([23], 24, ago(0, 3.0));
+findAndAddOpenOffer([24], 23, ago(0, 2.0));
 
-// KOM301 Lecture - 2 open offers
-findAndAddOpenOffer([25],    26, ago(0, 5.5));
-findAndAddOpenOffer([26],    25, ago(0, 4.5));
+// KOM301 - Lecture
+findAndAddOpenOffer([25], 26, ago(0, 5.5));
+findAndAddOpenOffer([26], 25, ago(0, 4.5));
 
-// KOM301 Responsi - 3 open offers
-findAndAddOpenOffer([27],    28, ago(0, 3.5));
-findAndAddOpenOffer([28],    29, ago(0, 2.5));
-findAndAddOpenOffer([29],    27, ago(0, 1.5));
+// KOM301 - Responsi
+findAndAddOpenOffer([27], 28, ago(0, 3.5));
+findAndAddOpenOffer([28], 29, ago(0, 2.5));
+findAndAddOpenOffer([29], 27, ago(0, 1.5));
 
 // ==================== DERIVE FINAL ENROLLMENTS FROM STATE ====================
 
 /**
- * The `state` map is the canonical source of truth.
- * After all matched swaps have mutated it, reading state directly gives us
- * the correct final enrollment for every student.
- * This is inserted as the `enrollments` table data.
+ * The state map is the canonical source of truth after all matched swaps.
+ * Reading it directly gives the correct final enrollment for every student.
  */
 function buildEnrollments() {
   const enrollments = [];
@@ -531,110 +517,154 @@ function buildEnrollments() {
 // ==================== VALIDATION ====================
 
 function validate() {
-  console.log('\n🔍 Validating seed data...');
+  console.log('\n--- Validating seed data ---');
   let errors = 0;
 
   for (const offer of offerRecords) {
-    const offererEnrollments = state[offer.offererNim];
-
     if (offer.status === 'matched') {
-      // After matched swaps, the offerer should have wantedClassId (not myClassId)
       if (!state[offer.offererNim].has(offer.wantedClassId)) {
-        console.error(`  ❌ VALIDATE: ${offer.offererNim} missing wantedClass ${offer.wantedClassId} after matched swap`);
+        console.error(`VALIDATE ERROR: ${offer.offererNim} missing wantedClass ${offer.wantedClassId} after matched swap`);
         errors++;
       }
       if (!state[offer.takerNim].has(offer.myClassId)) {
-        console.error(`  ❌ VALIDATE: ${offer.takerNim} missing myClass ${offer.myClassId} after matched swap`);
+        console.error(`VALIDATE ERROR: ${offer.takerNim} missing myClass ${offer.myClassId} after matched swap`);
         errors++;
       }
     }
 
     if (offer.status === 'cancelled' || offer.status === 'open') {
-      // These never swapped, so offerer should still have myClassId
       if (!state[offer.offererNim].has(offer.myClassId)) {
-        console.error(`  ❌ VALIDATE: ${offer.offererNim} should still have myClass ${offer.myClassId} (${offer.status} offer)`);
+        console.error(`VALIDATE ERROR: ${offer.offererNim} should still have myClass ${offer.myClassId} (${offer.status} offer)`);
         errors++;
       }
     }
 
     if (offer.status === 'open') {
-      // wantedClass must not conflict with offerer's current (post-swap) schedule
       const conflict = hasConflict(offer.offererNim, offer.wantedClassId, offer.myClassId);
       if (conflict) {
-        console.error(`  ❌ VALIDATE: ${offer.offererNim}'s open offer wants class ${offer.wantedClassId} but conflicts with class ${conflict.conflictId}`);
+        console.error(`VALIDATE ERROR: ${offer.offererNim} open offer wants class ${offer.wantedClassId} but conflicts with class ${conflict.conflictId}`);
         errors++;
       }
     }
   }
 
-  if (errors === 0) {
-    console.log('  ✅ All offers are internally consistent!');
-  } else {
-    throw new Error(`Seed validation failed with ${errors} error(s). Fix the seed before importing.`);
+  if (errors > 0) {
+    throw new Error(`Seed validation failed with ${errors} error(s). Fix before importing.`);
   }
+
+  console.log('Validation passed.');
+}
+
+// ==================== BUILD NOTIFICATIONS ====================
+
+/**
+ * Generates inbox notifications for all matched offers.
+ * Inserts offers one-by-one (not createMany) to get real DB-generated IDs,
+ * then builds notifications referencing those IDs.
+ * All seeded notifications are read: true — they are historical data.
+ * staleCancelledOffers is empty for seed data — not simulated.
+ */
+async function insertOffersAndBuildNotifications() {
+  const notificationRecords = [];
+
+  for (const offer of offerRecords) {
+    const inserted = await prisma.barterOffer.create({ data: offer });
+
+    if (offer.status !== 'matched') continue;
+
+    const myClass     = PC[offer.myClassId];
+    const wantedClass = PC[offer.wantedClassId];
+    const offerer     = USER_MAP[offer.offererNim];
+    const taker       = USER_MAP[offer.takerNim];
+
+    notificationRecords.push({
+      recipientNim: offer.offererNim,
+      type: 'barter_matched_as_offerer',
+      read: true,
+      createdAt: offer.completedAt,
+      data: {
+        offerId: inserted.id,
+        takerNim: taker.nim,
+        takerName: taker.name,
+        yourOldClass: { courseCode: myClass.courseCode,     classCode: myClass.classCode     },
+        yourNewClass: { courseCode: wantedClass.courseCode, classCode: wantedClass.classCode },
+        staleCancelledOffers: [],
+      },
+    });
+
+    notificationRecords.push({
+      recipientNim: offer.takerNim,
+      type: 'barter_matched_as_taker',
+      read: true,
+      createdAt: offer.completedAt,
+      data: {
+        offerId: inserted.id,
+        offererNim: offerer.nim,
+        offererName: offerer.name,
+        yourOldClass: { courseCode: wantedClass.courseCode, classCode: wantedClass.classCode },
+        yourNewClass: { courseCode: myClass.courseCode,     classCode: myClass.classCode     },
+        staleCancelledOffers: [],
+      },
+    });
+  }
+
+  return notificationRecords;
 }
 
 // ==================== MAIN IMPORT ====================
 
 async function importData() {
-  console.log('\n📊 Seed plan:');
-
-  // Run simulation first (synchronous — computes state and offerRecords)
-  const matchedCount  = offerRecords.filter(o => o.status === 'matched').length;
-  const cancelledCount = offerRecords.filter(o => o.status === 'cancelled').length;
-  const openCount     = offerRecords.filter(o => o.status === 'open').length;
-
-  console.log(`   Matched: ${matchedCount} | Cancelled: ${cancelledCount} | Open: ${openCount} | Total: ${offerRecords.length}`);
-
-  // Validate before touching DB
   validate();
 
-  const enrollments = buildEnrollments();
-  console.log(`\n   Enrollments (post-swap): ${enrollments.length}`);
-  console.log(`   Users: ${users.length} | Classes: ${parallelClasses.length}`);
+  const enrollments    = buildEnrollments();
+  const matchedCount   = offerRecords.filter(o => o.status === 'matched').length;
+  const cancelledCount = offerRecords.filter(o => o.status === 'cancelled').length;
+  const openCount      = offerRecords.filter(o => o.status === 'open').length;
 
-  // ---- DB WRITES ----
-  console.log('\n🧹 Cleaning existing data...');
+  console.log('\n--- Seed plan ---');
+  console.log(`Users        : ${users.length}`);
+  console.log(`Classes      : ${parallelClasses.length}`);
+  console.log(`Enrollments  : ${enrollments.length}`);
+  console.log(`Offers       : ${offerRecords.length} (matched: ${matchedCount}, cancelled: ${cancelledCount}, open: ${openCount})`);
+  console.log(`Notifications: ${matchedCount * 2} (2 per matched offer)`);
+
+  console.log('\n--- Cleaning existing data ---');
+  // Delete in dependency order — child tables first
+  await prisma.notification.deleteMany({});
   await prisma.barterOffer.deleteMany({});
   await prisma.enrollment.deleteMany({});
   await prisma.parallelClass.deleteMany({});
   await prisma.user.deleteMany({});
 
-  console.log('✨ Importing fresh data...');
+  console.log('\n--- Importing data ---');
 
   await prisma.user.createMany({ data: users });
-  console.log(`   ✅ ${users.length} users`);
+  console.log(`users: ${users.length}`);
 
   await prisma.parallelClass.createMany({ data: parallelClasses });
-  console.log(`   ✅ ${parallelClasses.length} parallel classes`);
+  console.log(`parallel_classes: ${parallelClasses.length}`);
 
-  // Enrollments: batch in chunks to avoid overwhelming the connection
+  // Batch enrollments to avoid overwhelming the connection pool
   const CHUNK = 200;
   for (let i = 0; i < enrollments.length; i += CHUNK) {
     await prisma.enrollment.createMany({ data: enrollments.slice(i, i + CHUNK) });
   }
-  console.log(`   ✅ ${enrollments.length} enrollments`);
+  console.log(`enrollments: ${enrollments.length}`);
 
-  for (const offer of offerRecords) {
-    await prisma.barterOffer.create({ data: offer });
-  }
-  console.log(`   ✅ ${offerRecords.length} barter offers`);
+  // Insert offers one-by-one to get real IDs for notification references
+  const notificationRecords = await insertOffersAndBuildNotifications();
+  console.log(`barter_offers: ${offerRecords.length}`);
 
-  console.log('\n✅ Import complete!');
-  console.log('\n📊 Final summary:');
-  console.log(`   Users              : ${users.length}`);
-  console.log(`   Parallel Classes   : ${parallelClasses.length}`);
-  console.log(`   Enrollments        : ${enrollments.length}`);
-  console.log(`   Offers (matched)   : ${matchedCount}`);
-  console.log(`   Offers (cancelled) : ${cancelledCount}`);
-  console.log(`   Offers (open)      : ${openCount}`);
-  console.log(`   Offers (total)     : ${offerRecords.length}`);
+  await prisma.notification.createMany({ data: notificationRecords });
+  console.log(`notifications: ${notificationRecords.length}`);
+
+  console.log('\n--- Import complete ---');
 
   await prisma.$disconnect();
   await pool.end();
 }
 
 importData().catch(err => {
-  console.error('\n❌ Seed failed:', err.message);
+  console.error('Seed failed:', err.message);
   process.exit(1);
 });

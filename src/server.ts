@@ -67,13 +67,22 @@ const barterMatchedAsTakerDataSchema = z.object({
   staleCancelledOffers: z.array(staleCancelledOfferSchema),
 });
 
+const barterAutoMatchedDataSchema = z.object({
+  offerId: z.number(),
+  counterpartNim: z.string(),
+  counterpartName: z.string(),
+  yourOldClass: z.object({ courseCode: z.string(), classCode: z.string() }),
+  yourNewClass: z.object({ courseCode: z.string(), classCode: z.string() }),
+  staleCancelledOffers: z.array(staleCancelledOfferSchema),
+});
+
 // Inferred types from Zod schemas — single source of truth
 export type StaleCancelledOffer = z.infer<typeof staleCancelledOfferSchema>;
 export type BarterMatchedAsOffererData = z.infer<typeof barterMatchedAsOffererDataSchema>;
 export type BarterMatchedAsTakerData = z.infer<typeof barterMatchedAsTakerDataSchema>;
-export type NotificationData = BarterMatchedAsOffererData | BarterMatchedAsTakerData;
-
-export type NotificationType = 'barter_matched_as_offerer' | 'barter_matched_as_taker';
+export type BarterAutoMatchedData = z.infer<typeof barterAutoMatchedDataSchema>;
+export type NotificationData = BarterMatchedAsOffererData | BarterMatchedAsTakerData | BarterAutoMatchedData;
+export type NotificationType = 'barter_matched_as_offerer' | 'barter_matched_as_taker' | 'barter_auto_matched';
 
 // ===== TYPES =====
 type ClassSchedule = { day: string; timeStart: string; timeEnd: string };
@@ -110,6 +119,13 @@ async function getUserEnrollmentsExcluding(
   });
 }
 
+/**
+ * Batalkan otomatis penawaran-penawaran terbuka user yang tidak lagi valid setelah swap selesai.
+ * Dua kondisi pembatalan:
+ *   - 'no_longer_enrolled': myClassId yang ditawarkan sudah bukan milik user.
+ *   - 'schedule_conflict': wantedClass di penawaran itu bentrok dengan jadwal baru user.
+ * Harus dipanggil di dalam transaksi yang sama dengan swap agar atomik.
+ */
 async function cancelStaleOffers(
   nim: string,
   newSchedule: EnrollmentWithClass["parallelClass"][],
@@ -118,7 +134,7 @@ async function cancelStaleOffers(
 ): Promise<StaleCancelledOffer[]> {
   const openOffers = await tx.barterOffer.findMany({
     where: { offererNim: nim, status: 'open' },
-    include: { wantedClass: true }
+    include: { wantedClass: true, myClass: true }
   });
 
   const cancelled: StaleCancelledOffer[] = [];
@@ -163,6 +179,138 @@ async function createNotification(
 ) {
   return tx.notification.create({
     data: { recipientNim, type, data }
+  });
+}
+
+/**
+ * Cek apakah ada penawaran yang saling cocok dengan offer baru.
+ * Kalau ada, langsung eksekusi swap secara atomik tanpa intervensi user.
+ * Dipanggil setelah offer berhasil dibuat.
+ */
+async function autoMatch(
+  newOffer: { id: number; offererNim: string; myClassId: number; wantedClassId: number }
+): Promise<{
+  matched: boolean;
+  matchingOffer?: any;
+  offer?: any;
+  offererNotification?: any;
+  takerNotification?: any;
+  offererCancelled?: StaleCancelledOffer[];
+  takerCancelled?: StaleCancelledOffer[];
+  swaps?: { nim: string; oldClassId: number; newClassId: number }[];
+}> {
+  return await prisma.$transaction(async (tx) => {
+    // Lock the matching offer immediately inside the transaction
+    // biar ga race condition kalo dua offer masuk barengan
+    const matchingOffer = await tx.barterOffer.findFirst({
+      where: {
+        status: 'open',
+        myClassId: newOffer.wantedClassId,
+        wantedClassId: newOffer.myClassId,
+        offererNim: { not: newOffer.offererNim }
+      },
+      include: {
+        myClass: true,
+        wantedClass: true,
+        offerer: { select: { nim: true, name: true } }
+      }
+    });
+
+    if (!matchingOffer) return { matched: false };
+
+    // Fetch new offer's full data + classes
+    const offer = await tx.barterOffer.findUnique({
+      where: { id: newOffer.id },
+      include: {
+        myClass: true,
+        wantedClass: true,
+        offerer: { select: { nim: true, name: true } }
+      }
+    });
+
+    if (!offer) return { matched: false };
+
+    // Re-validasi enrollment kedua pihak — defensive check
+    const offererStillEnrolled = await tx.enrollment.findFirst({
+      where: { nim: matchingOffer.offererNim, parallelClassId: matchingOffer.myClassId }
+    });
+    const takerStillEnrolled = await tx.enrollment.findFirst({
+      where: { nim: offer.offererNim, parallelClassId: offer.myClassId }
+    });
+
+    if (!offererStillEnrolled || !takerStillEnrolled) return { matched: false };
+
+    // Re-validasi schedule conflict kedua pihak
+    const offererOtherEnrollments = await getUserEnrollmentsExcluding(matchingOffer.offererNim, matchingOffer.myClassId, tx);
+    const takerOtherEnrollments = await getUserEnrollmentsExcluding(offer.offererNim, offer.myClassId, tx);
+
+    const offererConflict = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, matchingOffer.wantedClass));
+    const takerConflict = takerOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, offer.wantedClass));
+
+    // Kalo ada konflik, batalin auto-match — biarkan user handle manual
+    if (offererConflict || takerConflict) return { matched: false };
+
+    const now = new Date();
+
+    // Mark kedua offer sebagai matched
+    await tx.barterOffer.update({
+      where: { id: matchingOffer.id },
+      data: { status: 'matched', takerNim: offer.offererNim, completedAt: now }
+    });
+    await tx.barterOffer.update({
+      where: { id: offer.id },
+      data: { status: 'matched', takerNim: matchingOffer.offererNim, completedAt: now }
+    });
+
+    // Swap enrollments
+    await tx.enrollment.updateMany({
+      where: { nim: matchingOffer.offererNim, parallelClassId: matchingOffer.myClassId },
+      data: { parallelClassId: matchingOffer.wantedClassId }
+    });
+    await tx.enrollment.updateMany({
+      where: { nim: offer.offererNim, parallelClassId: offer.myClassId },
+      data: { parallelClassId: offer.wantedClassId }
+    });
+
+    // Cancel stale offers kedua pihak
+    const offererNewSchedule = [...offererOtherEnrollments.map(e => e.parallelClass), matchingOffer.wantedClass];
+    const takerNewSchedule = [...takerOtherEnrollments.map(e => e.parallelClass), offer.wantedClass];
+
+    const offererCancelled = await cancelStaleOffers(matchingOffer.offererNim, offererNewSchedule, matchingOffer.myClassId, tx);
+    const takerCancelled = await cancelStaleOffers(offer.offererNim, takerNewSchedule, offer.myClassId, tx);
+
+    // Create notifications — type barter_auto_matched biar user tau ini sistem yang eksekusi
+    const offererNotification = await createNotification(tx, matchingOffer.offererNim, 'barter_auto_matched', {
+      offerId: matchingOffer.id,
+      counterpartNim: offer.offererNim,
+      counterpartName: offer.offerer.name,
+      yourOldClass: { courseCode: matchingOffer.myClass.courseCode, classCode: matchingOffer.myClass.classCode },
+      yourNewClass: { courseCode: matchingOffer.wantedClass.courseCode, classCode: matchingOffer.wantedClass.classCode },
+      staleCancelledOffers: offererCancelled,
+    });
+
+    const takerNotification = await createNotification(tx, offer.offererNim, 'barter_auto_matched', {
+      offerId: offer.id,
+      counterpartNim: matchingOffer.offererNim,
+      counterpartName: matchingOffer.offerer.name,
+      yourOldClass: { courseCode: offer.myClass.courseCode, classCode: offer.myClass.classCode },
+      yourNewClass: { courseCode: offer.wantedClass.courseCode, classCode: offer.wantedClass.classCode },
+      staleCancelledOffers: takerCancelled,
+    });
+
+    return {
+      matched: true,
+      matchingOffer,
+      offer,
+      offererNotification,
+      takerNotification,
+      offererCancelled,
+      takerCancelled,
+      swaps: [
+        { nim: matchingOffer.offererNim, oldClassId: matchingOffer.myClassId, newClassId: matchingOffer.wantedClassId },
+        { nim: offer.offererNim, oldClassId: offer.myClassId, newClassId: offer.wantedClassId }
+      ]
+    };
   });
 }
 
@@ -241,7 +389,7 @@ app.get('/api/offers', asyncHandler(async (req: express.Request, res: express.Re
 // ===== NOTIFICATION ROUTES =====
 
 app.get('/api/notifications', asyncHandler(async (req: express.Request, res: express.Response) => {
-  // TODO: replace with auth middleware
+  // TODO: ganti dengan auth middleware setelah implementasi login
   const nim = 'M6401211001';
 
   const notifications = await prisma.notification.findMany({
@@ -253,7 +401,7 @@ app.get('/api/notifications', asyncHandler(async (req: express.Request, res: exp
 }));
 
 app.patch('/api/notifications/read-all', asyncHandler(async (req: express.Request, res: express.Response) => {
-  // TODO: replace with auth middleware
+  // TODO: ganti dengan auth middleware setelah implementasi login
   const nim = 'M6401211001';
 
   await prisma.notification.updateMany({
@@ -319,7 +467,34 @@ app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: ex
   });
 
   io.emit('new-offer', offer);
-  res.status(201).json(offer);
+
+  // Cek auto-match setelah offer dibuat
+  const matchResult = await autoMatch({ id: offer.id, offererNim, myClassId, wantedClassId });
+
+  if (matchResult.matched) {
+    const { matchingOffer, offererNotification, takerNotification, offererCancelled, takerCancelled, swaps } = matchResult;
+
+    // Hapus kedua offer dari live feed
+    io.emit('offer-taken', { offerId: matchingOffer.id });
+    io.emit('offer-taken', { offerId: offer.id });
+
+    io.emit('enrollments-swapped', { swaps });
+
+    // Notify kedua user — sistem yang auto-match
+    io.to(`user-${matchingOffer.offererNim}`).emit('new-notification', offererNotification);
+    io.to(`user-${offer.offererNim}`).emit('new-notification', takerNotification);
+
+    for (const cancelled of offererCancelled!) {
+      io.emit('offer-taken', { offerId: cancelled.offerId });
+      io.to(`user-${matchingOffer.offererNim}`).emit('offer-auto-cancelled', cancelled);
+    }
+    for (const cancelled of takerCancelled!) {
+      io.emit('offer-taken', { offerId: cancelled.offerId });
+      io.to(`user-${offer.offererNim}`).emit('offer-auto-cancelled', cancelled);
+    }
+  }
+
+  res.status(201).json({ offer, autoMatched: matchResult.matched });
 }));
 
 app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
@@ -336,6 +511,7 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
     if (offer.status !== 'open') throw new Error('Offer already taken');
     if (offer.offererNim === takerNim) throw new Error('Cannot take your own offer');
 
+    // Validasi ulang: offerer mungkin sudah swap di penawaran lain sejak offer ini dibuat
     const offererStillEnrolled = await tx.enrollment.findFirst({
       where: { nim: offer.offererNim, parallelClassId: offer.myClassId }
     });
@@ -361,6 +537,7 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
       );
     }
 
+    // Re-validasi jadwal offerer — bisa berubah sejak offer dibuat
     const offererOtherEnrollments = await getUserEnrollmentsExcluding(offer.offererNim, offer.myClassId, tx);
     const offererConflict = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, offer.wantedClass));
     if (offererConflict) {
@@ -482,7 +659,7 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`🚀 Backend running on port ${PORT}`);
+  console.log(`Backend running on port ${PORT}`);
 });
 
 process.on('SIGINT', async () => {
