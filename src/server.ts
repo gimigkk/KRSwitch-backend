@@ -20,7 +20,7 @@ const prisma = new PrismaClient({ adapter });
 const io = new Server(server, {
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-    methods: ['GET', 'POST', 'DELETE']
+    methods: ['GET', 'POST', 'DELETE', 'PATCH']
   }
 });
 
@@ -39,8 +39,43 @@ const takeOfferSchema = z.object({
   takerNim: z.string().regex(/^M\d{10}$/),
 });
 
-// ===== TYPES =====
+// ===== NOTIFICATION DATA SCHEMAS (Zod) =====
 
+const staleCancelledOfferSchema = z.object({
+  offerId: z.number(),
+  reason: z.enum(['no_longer_enrolled', 'schedule_conflict']),
+  myClassId: z.number(),
+  wantedClassId: z.number(),
+  conflictingClass: z.string().optional(),
+});
+
+const barterMatchedAsOffererDataSchema = z.object({
+  offerId: z.number(),
+  takerNim: z.string(),
+  takerName: z.string(),
+  yourOldClass: z.object({ courseCode: z.string(), classCode: z.string() }),
+  yourNewClass: z.object({ courseCode: z.string(), classCode: z.string() }),
+  staleCancelledOffers: z.array(staleCancelledOfferSchema),
+});
+
+const barterMatchedAsTakerDataSchema = z.object({
+  offerId: z.number(),
+  offererNim: z.string(),
+  offererName: z.string(),
+  yourOldClass: z.object({ courseCode: z.string(), classCode: z.string() }),
+  yourNewClass: z.object({ courseCode: z.string(), classCode: z.string() }),
+  staleCancelledOffers: z.array(staleCancelledOfferSchema),
+});
+
+// Inferred types from Zod schemas — single source of truth
+export type StaleCancelledOffer = z.infer<typeof staleCancelledOfferSchema>;
+export type BarterMatchedAsOffererData = z.infer<typeof barterMatchedAsOffererDataSchema>;
+export type BarterMatchedAsTakerData = z.infer<typeof barterMatchedAsTakerDataSchema>;
+export type NotificationData = BarterMatchedAsOffererData | BarterMatchedAsTakerData;
+
+export type NotificationType = 'barter_matched_as_offerer' | 'barter_matched_as_taker';
+
+// ===== TYPES =====
 type ClassSchedule = { day: string; timeStart: string; timeEnd: string };
 type EnrollmentWithClass = {
   parallelClassId: number;
@@ -75,30 +110,28 @@ async function getUserEnrollmentsExcluding(
   });
 }
 
-/**
- * Batalkan otomatis penawaran-penawaran terbuka user yang tidak lagi valid setelah swap selesai.
- * Dua kondisi pembatalan:
- *   - 'no_longer_enrolled': myClassId yang ditawarkan sudah bukan milik user.
- *   - 'schedule_conflict': wantedClass di penawaran itu bentrok dengan jadwal baru user.
- * Harus dipanggil di dalam transaksi yang sama dengan swap agar atomik.
- */
 async function cancelStaleOffers(
   nim: string,
   newSchedule: EnrollmentWithClass["parallelClass"][],
   lostClassId: number,
   tx: any
-): Promise<{ offerId: number; reason: string; conflictingClass?: string }[]> {
+): Promise<StaleCancelledOffer[]> {
   const openOffers = await tx.barterOffer.findMany({
     where: { offererNim: nim, status: 'open' },
     include: { wantedClass: true }
   });
 
-  const cancelled: { offerId: number; reason: string; conflictingClass?: string }[] = [];
+  const cancelled: StaleCancelledOffer[] = [];
 
   for (const offer of openOffers) {
     if (offer.myClassId === lostClassId) {
       await tx.barterOffer.update({ where: { id: offer.id }, data: { status: 'cancelled' } });
-      cancelled.push({ offerId: offer.id, reason: 'no_longer_enrolled' });
+      cancelled.push({
+        offerId: offer.id,
+        reason: 'no_longer_enrolled',
+        myClassId: offer.myClassId,
+        wantedClassId: offer.wantedClassId,
+      });
       continue;
     }
 
@@ -108,12 +141,29 @@ async function cancelStaleOffers(
       cancelled.push({
         offerId: offer.id,
         reason: 'schedule_conflict',
+        myClassId: offer.myClassId,
+        wantedClassId: offer.wantedClassId,
         conflictingClass: `${conflict.courseCode}-${conflict.classCode}`
       });
     }
   }
 
   return cancelled;
+}
+
+/**
+ * Creates a notification row inside an active Prisma transaction.
+ * Must always be called within tx to stay atomic with the triggering event.
+ */
+async function createNotification(
+  tx: any,
+  recipientNim: string,
+  type: NotificationType,
+  data: NotificationData
+) {
+  return tx.notification.create({
+    data: { recipientNim, type, data }
+  });
 }
 
 // ===== MIDDLEWARE =====
@@ -188,6 +238,34 @@ app.get('/api/offers', asyncHandler(async (req: express.Request, res: express.Re
   res.json(offers);
 }));
 
+// ===== NOTIFICATION ROUTES =====
+
+app.get('/api/notifications', asyncHandler(async (req: express.Request, res: express.Response) => {
+  // TODO: replace with auth middleware
+  const nim = 'M6401211001';
+
+  const notifications = await prisma.notification.findMany({
+    where: { recipientNim: nim },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  res.json(notifications);
+}));
+
+app.patch('/api/notifications/read-all', asyncHandler(async (req: express.Request, res: express.Response) => {
+  // TODO: replace with auth middleware
+  const nim = 'M6401211001';
+
+  await prisma.notification.updateMany({
+    where: { recipientNim: nim, read: false },
+    data: { read: true }
+  });
+
+  res.json({ message: 'All notifications marked as read' });
+}));
+
+// ===== OFFER ROUTES =====
+
 app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
   const { myClassId, wantedClassId } = req.body;
   const offererNim = req.body.offererNim || 'M6401211001';
@@ -251,14 +329,13 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
   const result = await prisma.$transaction(async (tx) => {
     const offer = await tx.barterOffer.findUnique({
       where: { id: offerId },
-      include: { myClass: true, wantedClass: true }
+      include: { myClass: true, wantedClass: true, offerer: { select: { nim: true, name: true } } }
     });
 
     if (!offer) throw new Error('Offer not found');
     if (offer.status !== 'open') throw new Error('Offer already taken');
     if (offer.offererNim === takerNim) throw new Error('Cannot take your own offer');
 
-    // Validasi ulang: offerer mungkin sudah swap di penawaran lain sejak offer ini dibuat
     const offererStillEnrolled = await tx.enrollment.findFirst({
       where: { nim: offer.offererNim, parallelClassId: offer.myClassId }
     });
@@ -269,6 +346,13 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
     });
     if (!takerEnrollment) throw new Error('You are not enrolled in the wanted class');
 
+    // Fetch taker user data for notification
+    const taker = await tx.user.findUnique({
+      where: { nim: takerNim },
+      select: { nim: true, name: true }
+    });
+    if (!taker) throw new Error('Taker user not found');
+
     const takerOtherEnrollments = await getUserEnrollmentsExcluding(takerNim, offer.wantedClassId, tx);
     const takerConflict = takerOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, offer.myClass));
     if (takerConflict) {
@@ -277,7 +361,6 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
       );
     }
 
-    // Re-validasi jadwal offerer — bisa berubah sejak offer dibuat
     const offererOtherEnrollments = await getUserEnrollmentsExcluding(offer.offererNim, offer.myClassId, tx);
     const offererConflict = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, offer.wantedClass));
     if (offererConflict) {
@@ -304,11 +387,31 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
     const offererCancelled = await cancelStaleOffers(offer.offererNim, offererNewSchedule, offer.myClassId, tx);
     const takerCancelled = await cancelStaleOffers(takerNim, takerNewSchedule, offer.wantedClassId, tx);
 
-    return { offer, offererCancelled, takerCancelled };
+    // Create notifications inside the transaction — atomic with the swap
+    const offererNotification = await createNotification(tx, offer.offererNim, 'barter_matched_as_offerer', {
+      offerId,
+      takerNim: taker.nim,
+      takerName: taker.name,
+      yourOldClass: { courseCode: offer.myClass.courseCode, classCode: offer.myClass.classCode },
+      yourNewClass: { courseCode: offer.wantedClass.courseCode, classCode: offer.wantedClass.classCode },
+      staleCancelledOffers: offererCancelled,
+    });
+
+    const takerNotification = await createNotification(tx, takerNim, 'barter_matched_as_taker', {
+      offerId,
+      offererNim: offer.offererNim,
+      offererName: offer.offerer.name,
+      yourOldClass: { courseCode: offer.wantedClass.courseCode, classCode: offer.wantedClass.classCode },
+      yourNewClass: { courseCode: offer.myClass.courseCode, classCode: offer.myClass.classCode },
+      staleCancelledOffers: takerCancelled,
+    });
+
+    return { offer, taker, offererCancelled, takerCancelled, offererNotification, takerNotification };
   });
 
-  const { offer, offererCancelled, takerCancelled } = result;
+  const { offer, taker, offererCancelled, takerCancelled, offererNotification, takerNotification } = result;
 
+  // Socket emissions — always after transaction succeeds
   io.emit('offer-taken', { offerId });
   io.emit('enrollments-swapped', {
     swaps: [
@@ -316,6 +419,11 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
       { nim: takerNim, oldClassId: offer.wantedClassId, newClassId: offer.myClassId }
     ]
   });
+
+  // Real-time notification delivery to online users
+  io.to(`user-${offer.offererNim}`).emit('new-notification', offererNotification);
+  io.to(`user-${takerNim}`).emit('new-notification', takerNotification);
+
   io.to(`user-${offer.offererNim}`).emit('barter-success', { offerId, takerNim });
   io.to(`user-${takerNim}`).emit('barter-success', { offerId, offererNim: offer.offererNim });
 
