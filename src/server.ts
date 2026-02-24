@@ -2,11 +2,15 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { z } from 'zod';
+import authRouter from './auth.routes';
+import { requireAuth, AuthUser } from './auth.middleware';
 
 dotenv.config();
 
@@ -17,15 +21,23 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
+// Expose prisma to auth routes via app.locals
+app.locals.prisma = prisma;
+
 const io = new Server(server, {
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-    methods: ['GET', 'POST', 'DELETE', 'PATCH']
+    methods: ['GET', 'POST', 'DELETE', 'PATCH'],
+    credentials: true,
   }
 });
 
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }));
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  credentials: true, // required for cookies to be sent cross-origin
+}));
 app.use(express.json());
+app.use(cookieParser());
 
 // ===== VALIDATION =====
 const createOfferSchema = z.object({
@@ -338,42 +350,51 @@ const asyncHandler = (fn: Function) => {
   };
 };
 
+// ===== AUTH ROUTES (public — no requireAuth) =====
+app.use('/auth', authRouter);
+
 // ===== ROUTES =====
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'KRSwitch Backend Running' });
 });
 
-app.get('/api/users', asyncHandler(async (req: express.Request, res: express.Response) => {
+app.get('/api/users', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   const users = await prisma.user.findMany({
     select: { nim: true, name: true, email: true }
   });
   res.json(users);
 }));
 
-// TODO: ganti dengan auth middleware setelah implementasi login
-app.get('/api/me', asyncHandler(async (req: express.Request, res: express.Response) => {
-  const user = await prisma.user.findUnique({
-    where: { nim: 'M6401211001' },
-    select: { nim: true, name: true, email: true }
-  });
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(user);
-}));
+// User sudah diverifikasi oleh requireAuth — nim, name, email ada di req.user langsung
+app.get('/api/me', requireAuth, (req: express.Request, res: express.Response) => {
+  res.json(req.user);
+});
 
-app.get('/api/classes', asyncHandler(async (req: express.Request, res: express.Response) => {
+// Short-lived token khusus buat socket authentication.
+// httpOnly cookie tidak bisa dibaca JS, jadi kita issue token terpisah yang expire dalam 1 menit.
+app.get('/api/socket-token', requireAuth, (req: express.Request, res: express.Response) => {
+  const socketToken = jwt.sign(
+    { nim: req.user!.nim },
+    process.env.JWT_SECRET!,
+    { expiresIn: '1m' }
+  );
+  res.json({ token: socketToken });
+});
+
+app.get('/api/classes', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   const classes = await prisma.parallelClass.findMany({
     orderBy: [{ courseCode: 'asc' }, { classCode: 'asc' }]
   });
   res.json(classes);
 }));
 
-app.get('/api/enrollments', asyncHandler(async (req: express.Request, res: express.Response) => {
+app.get('/api/enrollments', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   const enrollments = await prisma.enrollment.findMany();
   res.json(enrollments);
 }));
 
-app.get('/api/offers', asyncHandler(async (req: express.Request, res: express.Response) => {
+app.get('/api/offers', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   const offers = await prisma.barterOffer.findMany({
     where: { status: 'open' },
     include: {
@@ -388,24 +409,18 @@ app.get('/api/offers', asyncHandler(async (req: express.Request, res: express.Re
 
 // ===== NOTIFICATION ROUTES =====
 
-app.get('/api/notifications', asyncHandler(async (req: express.Request, res: express.Response) => {
-  // TODO: ganti dengan auth middleware setelah implementasi login
-  const nim = 'M6401211001';
-
+app.get('/api/notifications', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   const notifications = await prisma.notification.findMany({
-    where: { recipientNim: nim },
+    where: { recipientNim: req.user!.nim },
     orderBy: { createdAt: 'desc' }
   });
 
   res.json(notifications);
 }));
 
-app.patch('/api/notifications/read-all', asyncHandler(async (req: express.Request, res: express.Response) => {
-  // TODO: ganti dengan auth middleware setelah implementasi login
-  const nim = 'M6401211001';
-
+app.patch('/api/notifications/read-all', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   await prisma.notification.updateMany({
-    where: { recipientNim: nim, read: false },
+    where: { recipientNim: req.user!.nim, read: false },
     data: { read: true }
   });
 
@@ -414,9 +429,9 @@ app.patch('/api/notifications/read-all', asyncHandler(async (req: express.Reques
 
 // ===== OFFER ROUTES =====
 
-app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
+app.post('/api/offers', requireAuth, validate(createOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
   const { myClassId, wantedClassId } = req.body;
-  const offererNim = req.body.offererNim || 'M6401211001';
+  const offererNim = req.user!.nim;
 
   const enrollment = await prisma.enrollment.findFirst({
     where: { nim: offererNim, parallelClassId: myClassId }
@@ -497,7 +512,7 @@ app.post('/api/offers', validate(createOfferSchema), asyncHandler(async (req: ex
   res.status(201).json({ offer, autoMatched: matchResult.matched });
 }));
 
-app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
+app.post('/api/offers/:id/take', requireAuth, validate(takeOfferSchema), asyncHandler(async (req: express.Request, res: express.Response) => {
   const offerId = parseInt(req.params.id as string);
   const { takerNim } = req.body;
 
@@ -616,9 +631,9 @@ app.post('/api/offers/:id/take', validate(takeOfferSchema), asyncHandler(async (
   res.json({ message: 'Barter completed successfully' });
 }));
 
-app.delete('/api/offers/:id', asyncHandler(async (req: express.Request, res: express.Response) => {
+app.delete('/api/offers/:id', requireAuth, asyncHandler(async (req: express.Request, res: express.Response) => {
   const offerId = parseInt(req.params.id as string);
-  const userNim = 'M6401211001';
+  const userNim = req.user!.nim;
 
   const offer = await prisma.barterOffer.findUnique({ where: { id: offerId } });
   if (!offer) return res.status(404).json({ error: 'Offer not found' });
@@ -647,8 +662,16 @@ io.on('connection', (socket) => {
   onlineUsers++;
   io.emit('online-count', onlineUsers);
 
-  socket.on('authenticate', (nim: string) => {
-    socket.join(`user-${nim}`);
+  // Client fetches a short-lived token from GET /api/socket-token dan kirim ke sini.
+  // Kita verifikasi server-side — jangan pernah trust NIM mentah dari client.
+  socket.on('authenticate', (token: string) => {
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
+      socket.join(`user-${payload.nim}`);
+      socket.data.nim = payload.nim;
+    } catch {
+      socket.emit('auth-error', { error: 'Invalid or expired socket token' });
+    }
   });
 
   socket.on('disconnect', () => {
