@@ -29,6 +29,8 @@ const prisma  = new PrismaClient({ adapter });
 // ═══════════════════════════════════════════════════════════════════════════
 
 const users = [
+  { nim: 'M04034341029' , name: 'Azka Julian',              email: 'azkajulian@apps.ipb.ac.id',   role: 'student' },
+  { nim: 'M0403241075', name: 'Muh Arifaushan',           email: 'muharifaushan@apps.ipb.ac.id', role: 'student' },
   { nim: 'M0403241117', name: 'Gilang Muhamad Widiagung',  email: 'gnaligilang@apps.ipb.ac.id',  role: 'student' },
   { nim: 'M6401211001', name: 'Ahmad Fauzi',               email: 'ahmad@apps.ipb.ac.id',        role: 'student' },
   { nim: 'M6401211002', name: 'Budi Santoso',              email: 'budi@apps.ipb.ac.id',         role: 'student' },
