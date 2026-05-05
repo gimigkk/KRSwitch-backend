@@ -9,7 +9,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "migrate": "npx prisma migrate dev",
-    "studio": "npx prisma studio"
+    "studio": "npx prisma studio",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "repository": {
     "type": "git",
@@ -50,10 +53,13 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.0.10",
     "@types/pg": "^8.16.0",
+    "@types/supertest": "^7.2.0",
     "nodemon": "^3.1.11",
     "prisma": "^7.3.0",
+    "supertest": "^7.2.2",
     "ts-node-dev": "^2.0.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
   }
 }
