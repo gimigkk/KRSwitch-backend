@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Server } from 'socket.io';
-import { requireAuth } from '../middleware/authMiddleware';
+import { requireAuth, requireStudent } from '../middleware/authMiddleware';
 import { validate, asyncHandler } from '../middleware/helpers';
 import { prisma } from '../prisma/db';
 import {
@@ -16,7 +16,7 @@ import {
 export function createOffersRouter(io: Server) {
   const router = Router();
 
-  router.get('/', requireAuth, asyncHandler(async (req: any, res: any) => {
+  router.get('/', requireStudent, asyncHandler(async (req: any, res: any) => {
     const offers = await prisma.barterOffer.findMany({
       where: { status: 'open' },
       include: { offerer: { select: { nim: true, name: true } }, myClass: true, wantedClass: true },
@@ -25,7 +25,7 @@ export function createOffersRouter(io: Server) {
     res.json(offers);
   }));
 
-  router.post('/', requireAuth, validate(createOfferSchema), asyncHandler(async (req: any, res: any) => {
+  router.post('/', requireStudent, validate(createOfferSchema), asyncHandler(async (req: any, res: any) => {
     const { myClassId, wantedClassId } = req.body;
     const offererNim = req.user!.nim;
 
@@ -84,7 +84,7 @@ export function createOffersRouter(io: Server) {
     res.status(201).json({ offer, autoMatched: matchResult.matched });
   }));
 
-  router.post('/:id/take', requireAuth, validate(takeOfferSchema), asyncHandler(async (req: any, res: any) => {
+  router.post('/:id/take', requireStudent, validate(takeOfferSchema), asyncHandler(async (req: any, res: any) => {
     const offerId = parseInt(req.params.id);
     const { takerNim } = req.body;
 
@@ -191,7 +191,7 @@ export function createOffersRouter(io: Server) {
     res.json({ message: 'Barter completed successfully' });
   }));
 
-  router.delete('/:id', requireAuth, asyncHandler(async (req: any, res: any) => {
+  router.delete('/:id', requireStudent, asyncHandler(async (req: any, res: any) => {
     const offerId = parseInt(req.params.id);
     const userNim = req.user!.nim;
 

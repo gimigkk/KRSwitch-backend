@@ -5,6 +5,7 @@ export interface AuthUser {
   nim: string;
   name: string;
   email: string;
+  role: string;
 }
 
 declare global {
@@ -26,4 +27,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     res.clearCookie('token');
     return res.status(401).json({ error: 'Session expired, please log in again' });
   }
+}
+
+export function requireStudent(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (req.user.role !== 'student') return res.status(403).json({ error: 'Forbidden: student only' });
+  next();
 }

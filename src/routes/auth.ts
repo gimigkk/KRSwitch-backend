@@ -12,7 +12,6 @@ const router = Router();
 const BACKEND_URL    = process.env.BACKEND_URL  ?? 'http://localhost:5000';
 const FRONTEND_URL   = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 const REDIRECT_URI   = `${BACKEND_URL}/auth/google/callback`;
-const ALLOWED_DOMAIN = 'apps.ipb.ac.id';
 const SCOPES         = ['openid', 'email', 'profile'];
 
 // --- Types -------------------------------------------
@@ -26,6 +25,7 @@ interface JwtPayload {
   nim: string;
   name: string;
   email: string;
+  role: string;
 }
 
 // --- Setup -------------------------------------------
@@ -58,7 +58,6 @@ router.get('/google', async (_req: Request, res: Response) => {
   res.redirect(client.generateAuthUrl({
     access_type: 'online',
     scope: SCOPES,
-    hd: ALLOWED_DOMAIN,  // hint buat Google biar filter akun IPB di UI-nya, bukan enforcement
     prompt: 'select_account',
     state,
     code_challenge: codeChallenge,
@@ -96,17 +95,16 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const googlePayload = ticket.getPayload();
     if (!googlePayload?.email) return redirectWithError(res, 'oauth_failed');
 
-    // field 'hd' tidak ada untuk akun Gmail biasa, ini enforcement kita sendiri bukan dari Google
-    if (googlePayload.hd !== ALLOWED_DOMAIN) return redirectWithError(res, 'wrong_domain');
+    console.log(`[auth] login attempt: ${googlePayload.email}`);
 
     const user = await prisma.user.findUnique({
       where: { email: googlePayload.email },
-      select: { nim: true, name: true, email: true },
+      select: { nim: true, name: true, email: true, role: true },
     });
 
     if (!user) return redirectWithError(res, 'not_registered');
 
-    const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email };
+    const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
     res.cookie('token', sessionToken, {
