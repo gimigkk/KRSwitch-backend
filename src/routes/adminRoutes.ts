@@ -53,30 +53,42 @@ router.get('/stats', requireAuth, requireAdmin, asyncHandler(async (_req: any, r
   res.json({ totalStudents, totalClasses, totalEnrollments, activeOffers, successfulTrades, onlineCount });
 }));
 
-// ─── Logs (pseudo-log from barter history) ───────────────────────────────────
+// --- Activity Logging Helper ---
+async function logActivity(type: string, nim: string, details: string) {
+  try {
+    const model = (prisma as any).activityLog;
+    if (!model) {
+      console.warn('ActivityLog model undefined in prisma client');
+      return;
+    }
+    const log = await model.create({
+      data: {
+        action_type: type,
+        user_nim: nim,
+        details: details
+      }
+    });
+    io.emit('admin-log-created', log);
+    return log;
+  } catch (err: any) {
+    console.error('Failed to log activity:', err.message);
+  }
+}
+
+// ─── Logs (Real Audit Trail) ────────────────────────────────────────────────
 
 // GET /api/admin/logs
 router.get('/logs', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
-  const offers = await prisma.barterOffer.findMany({
-    where: { status: { not: 'open' } },
-    orderBy: { completedAt: 'desc' },
-    take: 100,
-    include: {
-      offerer: { select: { nim: true, name: true } },
-      myClass: { select: { courseCode: true, classCode: true } },
-      wantedClass: { select: { courseCode: true, classCode: true } },
-    },
-  });
-
-  const logs = offers.map(o => ({
-    id: o.id,
-    timestamp: o.completedAt ?? o.createdAt,
-    action_type: o.status === 'matched' ? 'BARTER_MATCHED' : 'BARTER_CANCELLED',
-    user_nim: o.offererNim,
-    details: `${o.myClass.courseCode} (${o.myClass.classCode} → ${o.wantedClass.classCode})${o.takerNim ? ` | Taker: ${o.takerNim}` : ''}`,
-  }));
-
-  res.json(logs);
+  try {
+    const logs = await (prisma as any).activityLog.findMany({
+      orderBy: { timestamp: 'desc' },
+      take: 100
+    });
+    res.json(logs);
+  } catch (err: any) {
+    console.warn('ActivityLog table not ready or missing:', err.message);
+    res.json([]); // Return empty array to prevent frontend crash
+  }
 }));
 
 // ─── Schedule Upload ─────────────────────────────────────────────────────────
@@ -157,6 +169,10 @@ router.post(
     fs.writeFileSync(storagePath, req.file.buffer);
 
     io.emit('admin-schedule-updated', { count: result.count });
+    io.emit('admin-master-files-updated', { type: 'classes', exists: true });
+    
+    await logActivity('IMPORT_CLASSES', (req as any).user.nim, `Imported ${result.count} classes from CSV.`);
+
     res.json({ message: `Jadwal berhasil diupload. ${result.count} kelas ditambahkan.`, count: result.count });
   })
 );
@@ -225,6 +241,10 @@ router.post(
     fs.writeFileSync(storagePath, req.file.buffer);
 
     io.emit('admin-user-created', { count: data.length });
+    io.emit('admin-master-files-updated', { type: 'students', exists: true });
+
+    await logActivity('IMPORT_STUDENTS', (req as any).user.nim, `Imported ${data.length} students from CSV.`);
+
     res.json({ message: `${data.length} data mahasiswa berhasil di-import.`, count: data.length });
   })
 );
@@ -234,10 +254,15 @@ router.post(
   '/seed-random',
   requireAuth,
   requireAdmin,
-  asyncHandler(async (_req: any, res: any) => {
+  asyncHandler(async (req: any, res: any) => {
+    io.emit('admin-process-start', { message: 'Randomizing enrollments...' });
     const result = await randomizeEnrollments();
     
     io.emit('admin-enrollment-updated', { count: result.enrollmentCount });
+    io.emit('admin-process-end', { message: 'Randomization complete' });
+
+    await logActivity('RANDOMIZE_SYSTEM', (req as any).user.nim, `Randomized ${result.enrollmentCount} enrollments for ${result.studentCount} students.`);
+
     res.json({ 
       message: `Randomisasi selesai. ${result.studentCount} mahasiswa didaftarkan ke ${result.enrollmentCount} kelas.`,
       ...result 
@@ -271,7 +296,7 @@ router.post(
   '/reset',
   requireAuth,
   requireAdmin,
-  asyncHandler(async (_req: any, res: any) => {
+  asyncHandler(async (req: any, res: any) => {
     await prisma.$transaction([
       prisma.notification.deleteMany({}),
       prisma.barterOffer.deleteMany({}),
@@ -290,6 +315,10 @@ router.post(
     }
 
     io.emit('admin-system-reset', { message: 'System has been reset to zero' });
+    io.emit('admin-master-files-updated', { type: 'all', exists: false });
+
+    await logActivity('SYSTEM_RESET', (req as any).user.nim, 'Full system reset performed. All enrollments and master data cleared.');
+
     res.json({ message: 'Seluruh data berhasil dihapus. Sistem kembali ke nol.' });
   })
 );
@@ -316,6 +345,8 @@ router.delete(
   requireAdmin,
   asyncHandler(async (req: any, res: any) => {
     const { type } = req.params;
+    if (!['students', 'classes'].includes(type)) return res.status(400).json({ error: 'Invalid type' });
+
     const fileName = type === 'students' ? 'master_students.csv' : 'master_classes.csv';
     const filePath = path.join(process.cwd(), 'storage', 'master', fileName);
 
@@ -337,6 +368,10 @@ router.delete(
       ]);
     }
 
+    io.emit('admin-master-files-updated', { type, exists: false });
+    
+    await logActivity('DELETE_MASTER', (req as any).user.nim, `Deleted master data for: ${type}. Related enrollments cleared.`);
+
     res.json({ message: `Data ${type} berhasil dihapus.` });
   })
 );
@@ -356,9 +391,12 @@ router.get('/classes/:id/students', requireAuth, requireAdmin, asyncHandler(asyn
 // ─── Purge Offers ────────────────────────────────────────────────────────────
 
 // DELETE /api/admin/purge-offers
-router.delete('/purge-offers', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
+router.delete('/purge-offers', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const result = await prisma.barterOffer.deleteMany({ where: { status: 'open' } });
   io.emit('admin-offers-purged', { count: result.count });
+  
+  await logActivity('PURGE_OFFERS', (req as any).user.nim, `Purged ${result.count} active barter offers from the system.`);
+
   res.json({ message: `${result.count} penawaran barter aktif berhasil dihapus.`, count: result.count });
 }));
 
@@ -405,19 +443,34 @@ router.get('/users', requireAuth, requireAdmin, asyncHandler(async (req: any, re
   const search = String(req.query.search ?? '').trim();
 
   const users = await prisma.user.findMany({
-    where: search
-      ? {
-          OR: [
-            { nim: { contains: search, mode: 'insensitive' } },
-            { name: { contains: search, mode: 'insensitive' } },
-          ],
-        }
-      : undefined,
-    select: { nim: true, name: true, email: true, role: true },
+    where: {
+      role: 'student',
+      ...(search ? {
+        OR: [
+          { nim: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } },
+        ],
+      } : {})
+    },
+    include: {
+      enrollments: { select: { id: true } },
+      offeredBarters: { 
+        where: { status: 'open' },
+        select: { id: true }
+      }
+    },
     orderBy: { nim: 'asc' },
   });
 
-  res.json(users);
+  const formatted = users.map(u => ({
+    nim: u.nim,
+    name: u.name,
+    email: u.email,
+    enrollmentCount: u.enrollments.length,
+    activeBarterCount: u.offeredBarters.length
+  }));
+
+  res.json(formatted);
 }));
 
 // GET /api/admin/users/:nim  (full detail with enrollments + active barter offers)
@@ -454,6 +507,7 @@ router.post('/users', requireAuth, requireAdmin, asyncHandler(async (req: any, r
     data: { nim: String(nim).toUpperCase().trim(), name: String(name).trim(), email: String(email).toLowerCase().trim() },
   });
 
+  await logActivity('CREATE_STUDENT', (req as any).user.nim, `Manually created student record: ${user.name} (${user.nim}).`);
   io.emit('admin-user-created', user);
   res.status(201).json(user);
 }));
@@ -474,6 +528,7 @@ router.put('/users/:oldNim', requireAuth, requireAdmin, asyncHandler(async (req:
     },
   });
 
+  await logActivity('UPDATE_STUDENT', (req as any).user.nim, `Updated student profile: ${oldNim} -> ${updated.nim} (${updated.name}).`);
   io.emit('admin-user-updated', { oldNim, updated });
   res.json(updated);
 }));
@@ -484,6 +539,7 @@ router.delete('/users/:nim', requireAuth, requireAdmin, asyncHandler(async (req:
   if (!existing) return res.status(404).json({ error: 'Mahasiswa tidak ditemukan' });
 
   await prisma.user.delete({ where: { nim: req.params.nim } });
+  await logActivity('DELETE_STUDENT', (req as any).user.nim, `Permanently purged student ${existing.name} (${existing.nim}) from the system.`);
   io.emit('admin-user-deleted', { nim: req.params.nim });
   res.json({ message: `Mahasiswa ${req.params.nim} berhasil dihapus dari sistem.` });
 }));
@@ -522,9 +578,11 @@ router.put('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (re
   const updated = await prisma.enrollment.update({
     where: { id: enrollmentId },
     data: { parallelClassId: Number(newParallelClassId) },
-    include: { parallelClass: true },
+    include: { parallelClass: true, user: true },
   });
 
+  await logActivity('UPDATE_KRS', (req as any).user.nim, `Manual KRS move for ${updated.user.name}: assigned to class ${updated.parallelClass.classCode} (${updated.parallelClass.courseCode}).`);
+  
   io.emit('admin-enrollment-updated', updated);
   // Also notify the student specifically
   io.to(`user-${updated.nim}`).emit('enrollment-updated', updated);
@@ -559,6 +617,15 @@ router.delete('/offers/:id', requireAuth, requireAdmin, asyncHandler(async (req:
   if (offer.status !== 'open') return res.status(400).json({ error: 'Hanya penawaran berstatus open yang bisa dibatalkan' });
 
   await prisma.barterOffer.update({ where: { id: offerId }, data: { status: 'cancelled' } });
+  
+  const fullOffer = await prisma.barterOffer.findUnique({
+    where: { id: offerId },
+    include: { offerer: true, myClass: true }
+  });
+
+  if (fullOffer) {
+    await logActivity('CANCEL_BARTER', (req as any).user.nim, `Force-cancelled barter offer for ${fullOffer.offerer.name} (Course: ${fullOffer.myClass.courseCode}).`);
+  }
   
   io.emit('offer-taken', { offerId });
   io.to(`user-${offer.offererNim}`).emit('offer-auto-cancelled', { 
@@ -645,6 +712,13 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
       reason: 'schedule_override' 
     });
   });
+
+  const [u1, u2] = await Promise.all([
+    prisma.user.findUnique({ where: { nim: nim1 } }),
+    prisma.user.findUnique({ where: { nim: nim2 } })
+  ]);
+
+  await logActivity('ADMIN_OVERRIDE_SWAP', (req as any).user.nim, `FORCED SWAP: ${u1?.name} <-> ${u2?.name} for course ${courseCode}.`);
 
   res.json({
     message: `Override berhasil. Jadwal ${courseCode} antara ${nim1} dan ${nim2} telah ditukar.`,

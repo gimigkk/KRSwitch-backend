@@ -1,0 +1,11 @@
+courseCode,courseName,classCode,day,timeStart,timeEnd,room
+KOM101,Dasar Pemrograman,K1,1,08:00,09:40,Ruang 201
+KOM101,Dasar Pemrograman,K2,1,10:00,11:40,Ruang 201
+KOM101,Dasar Pemrograman,P1,2,13:00,15:00,Lab Kom 1
+KOM101,Dasar Pemrograman,P2,2,15:00,17:00,Lab Kom 1
+KOM102,Struktur Data,K1,3,08:00,09:40,Ruang 202
+KOM102,Struktur Data,K2,3,10:00,11:40,Ruang 202
+KOM102,Struktur Data,P1,4,13:00,15:00,Lab Kom 2
+KOM102,Struktur Data,P2,4,15:00,17:00,Lab Kom 2
+KOM103,Basis Data,K1,5,08:00,09:40,Ruang 203
+KOM103,Basis Data,P1,5,13:00,15:00,Lab Kom 3
