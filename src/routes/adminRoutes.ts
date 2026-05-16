@@ -2,17 +2,20 @@ import { Router } from 'express';
 import multer from 'multer';
 import { Readable } from 'stream';
 import csvParser from 'csv-parser';
+import fs from 'fs';
+import path from 'path';
 import { Server } from 'socket.io';
 import { requireAuth } from '../middleware/authMiddleware';
 import { asyncHandler } from '../middleware/helpers';
 import { prisma } from '../prisma/db';
 import { getOnlineCount } from '../socket/socketHandler';
+import { randomizeEnrollments } from '../utils/seeding';
 
 export default (io: Server) => {
   const router = Router();
   const upload = multer({ storage: multer.memoryStorage() });
 
-// ─── Helper ─────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function requireAdmin(req: any, res: any, next: any) {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -20,18 +23,34 @@ function requireAdmin(req: any, res: any, next: any) {
   next();
 }
 
+const DAY_MAP: Record<string, string> = {
+  '1': 'Senin',
+  '2': 'Selasa',
+  '3': 'Rabu',
+  '4': 'Kamis',
+  '5': 'Jumat',
+  '6': 'Sabtu',
+  '7': 'Minggu'
+};
+
+function mapDay(day: string): string {
+  const d = day.trim();
+  return DAY_MAP[d] || d; // Fallback ke string aslinya jika bukan angka 1-7
+}
+
 // ─── Stats ───────────────────────────────────────────────────────────────────
 
 // GET /api/admin/stats
 router.get('/stats', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
-  const [totalStudents, totalClasses, activeOffers, successfulTrades] = await Promise.all([
+  const [totalStudents, totalClasses, totalEnrollments, activeOffers, successfulTrades] = await Promise.all([
     prisma.user.count(),
     prisma.parallelClass.count(),
+    prisma.enrollment.count(),
     prisma.barterOffer.count({ where: { status: 'open' } }),
     prisma.barterOffer.count({ where: { status: 'matched' } }),
   ]);
   const onlineCount = getOnlineCount();
-  res.json({ totalStudents, totalClasses, activeOffers, successfulTrades, onlineCount });
+  res.json({ totalStudents, totalClasses, totalEnrollments, activeOffers, successfulTrades, onlineCount });
 }));
 
 // ─── Logs (pseudo-log from barter history) ───────────────────────────────────
@@ -62,9 +81,10 @@ router.get('/logs', requireAuth, requireAdmin, asyncHandler(async (_req: any, re
 
 // ─── Schedule Upload ─────────────────────────────────────────────────────────
 
-// POST /api/admin/upload-schedule  (multipart/form-data, field: "file")
+// POST /api/admin/upload-schedule  (Legacy alias)
+// POST /api/admin/import-classes
 router.post(
-  '/upload-schedule',
+  ['/upload-schedule', '/import-classes'],
   requireAuth,
   requireAdmin,
   upload.single('file'),
@@ -72,7 +92,6 @@ router.post(
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const rows: any[] = [];
-
     await new Promise<void>((resolve, reject) => {
       Readable.from(req.file.buffer)
         .pipe(csvParser())
@@ -83,41 +102,242 @@ router.post(
 
     if (rows.length === 0) return res.status(400).json({ error: 'CSV file is empty or invalid' });
 
-    // Expected CSV columns: courseCode, courseName, classCode, day, timeStart, timeEnd, room
-    const upserts = rows.map(row =>
-      prisma.parallelClass.upsert({
-        where: {
-          // Prisma needs a unique field — we'll rely on create/update by compound search
-          // Since there's no @@unique on (courseCode, classCode), we do a findFirst + create approach
-          id: -1, // will never match; force create path via create below
-        },
-        update: {},
-        create: {
-          courseCode: String(row.courseCode ?? row['courseCode'] ?? '').trim(),
-          courseName: String(row.courseName ?? row['courseName'] ?? '').trim(),
-          classCode: String(row.classCode ?? row['classCode'] ?? '').trim(),
-          day: String(row.day ?? '').trim(),
-          timeStart: String(row.timeStart ?? row['timeStart'] ?? '').trim(),
-          timeEnd: String(row.timeEnd ?? row['timeEnd'] ?? '').trim(),
-          room: String(row.room ?? '').trim(),
-        },
-      }).catch(() => null) // ignore individual upsert errors
-    );
+    console.log('Importing classes, rows found:', rows.length);
+    if (rows.length > 0) {
+      console.log('DEBUG RAW ROW 0:', JSON.stringify(rows[0]));
+      console.log('DEBUG KEYS:', Object.keys(rows[0]));
+    }
 
-    // Better approach: createMany with skipDuplicates (no unique constraint on courseCode+classCode)
-    const data = rows.map(row => ({
-      courseCode: String(row.courseCode ?? '').trim(),
-      courseName: String(row.courseName ?? '').trim(),
-      classCode: String(row.classCode ?? '').trim(),
-      day: String(row.day ?? '').trim(),
-      timeStart: String(row.timeStart ?? row.time_start ?? '').trim(),
-      timeEnd: String(row.timeEnd ?? row.time_end ?? '').trim(),
-      room: String(row.room ?? '').trim(),
-    }));
+    const data = rows.map((row, idx) => {
+      const getVal = (keys: string[]) => {
+        for (const key of keys) {
+          const foundKey = Object.keys(row).find(k => k.replace(/^\ufeff/, '').trim().toLowerCase() === key.toLowerCase());
+          if (foundKey) return row[foundKey];
+        }
+        return '';
+      };
 
-    const result = await prisma.parallelClass.createMany({ data, skipDuplicates: false });
+      const mapped = {
+        courseCode: String(getVal(['courseCode', 'course_code', 'kode_matkul'])).trim(),
+        courseName: String(getVal(['courseName', 'course_name', 'nama_matkul'])).trim(),
+        classCode: String(getVal(['classCode', 'class_code', 'kelas'])).trim(),
+        day: mapDay(String(getVal(['day', 'hari'])).trim()),
+        timeStart: String(getVal(['timeStart', 'time_start', 'jam_mulai', 'ts'])).trim(),
+        timeEnd: String(getVal(['timeEnd', 'time_end', 'jam_selesai', 'te'])).trim(),
+        room: String(getVal(['room', 'ruang'])).trim(),
+      };
+
+      if (idx === 0) console.log('DEBUG MAPPED ROW 0:', JSON.stringify(mapped));
+      return mapped;
+    }).filter(d => d.courseCode && d.classCode);
+
+    console.log('Valid classes to insert:', data.length);
+
+    if (data.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid class data found in CSV', 
+        details: 'Pastikan header CSV sesuai: courseCode, courseName, classCode, day, timeStart, timeEnd, room' 
+      });
+    }
+
+    // NEW: Validation Mode Check
+    if (req.query.validate === 'true') {
+      return res.json({ 
+        message: 'CSV valid dan siap di-import.', 
+        count: data.length,
+        preview: data[0]
+      });
+    }
+
+    await prisma.parallelClass.deleteMany({}); // Only delete if we have new data to replace it
+    const result = await prisma.parallelClass.createMany({ data });
+    
+    // SAVE FILE TO DISK
+    const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_classes.csv');
+    fs.writeFileSync(storagePath, req.file.buffer);
+
     io.emit('admin-schedule-updated', { count: result.count });
     res.json({ message: `Jadwal berhasil diupload. ${result.count} kelas ditambahkan.`, count: result.count });
+  })
+);
+
+// POST /api/admin/import-students
+router.post(
+  '/import-students',
+  requireAuth,
+  requireAdmin,
+  upload.single('file'),
+  asyncHandler(async (req: any, res: any) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const rows: any[] = [];
+    await new Promise<void>((resolve, reject) => {
+      Readable.from(req.file.buffer)
+        .pipe(csvParser())
+        .on('data', (row: any) => rows.push(row))
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    console.log('Importing students, rows found:', rows.length);
+    if (rows.length > 0) console.log('First row keys:', Object.keys(rows[0]));
+
+    const data = rows.map(row => {
+      const getVal = (keys: string[]) => {
+        for (const key of keys) {
+          const foundKey = Object.keys(row).find(k => k.replace(/^\ufeff/, '').toLowerCase() === key.toLowerCase());
+          if (foundKey) return row[foundKey];
+        }
+        return '';
+      };
+
+      return {
+        nim: String(getVal(['nim', 'student_id'])).toUpperCase().trim(),
+        name: String(getVal(['name', 'nama', 'full_name'])).trim(),
+        email: String(getVal(['email'])).toLowerCase().trim(),
+        role: 'student'
+      };
+    }).filter(d => d.nim && d.name);
+
+    console.log('Valid students to insert:', data.length);
+
+    if (data.length === 0) return res.status(400).json({ error: 'No valid student data found in CSV' });
+
+    // NEW: Validation Mode Check
+    if (req.query.validate === 'true') {
+      return res.json({ 
+        message: 'CSV valid dan siap di-import.', 
+        count: data.length,
+        preview: data[0]
+      });
+    }
+
+    // Clear old students first (Master Data Reset)
+    console.log('Cleaning old students data...');
+    await prisma.user.deleteMany({ where: { role: 'student' } });
+
+    // Insert students
+    // Insert students
+    const result = await prisma.user.createMany({ data });
+
+    // SAVE FILE TO DISK
+    const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_students.csv');
+    fs.writeFileSync(storagePath, req.file.buffer);
+
+    io.emit('admin-user-created', { count: data.length });
+    res.json({ message: `${data.length} data mahasiswa berhasil di-import.`, count: data.length });
+  })
+);
+
+// POST /api/admin/seed-random
+router.post(
+  '/seed-random',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (_req: any, res: any) => {
+    const result = await randomizeEnrollments();
+    
+    io.emit('admin-enrollment-updated', { count: result.enrollmentCount });
+    res.json({ 
+      message: `Randomisasi selesai. ${result.studentCount} mahasiswa didaftarkan ke ${result.enrollmentCount} kelas.`,
+      ...result 
+    });
+  })
+);
+
+// GET /api/admin/template/:type
+router.get('/template/:type', requireAuth, requireAdmin, (req: any, res: any) => {
+  const { type } = req.params;
+  let csv = '';
+  let filename = '';
+
+  if (type === 'students') {
+    csv = 'nim,name,email\nM0403241075,Muh Arifaushan,muh@apps.ipb.ac.id\nM0403241117,Gilang Muhamad Widiagung,gnaligilang@apps.ipb.ac.id';
+    filename = 'template_mahasiswa.csv';
+  } else if (type === 'classes') {
+    csv = 'courseCode,courseName,classCode,day,timeStart,timeEnd,room\nKOM1221,Metode Kuantitatif,K1,1,08:00,09:40,Ruang 101\nKOM1221,Metode Kuantitatif,P1,1,13:00,15:00,Lab 1';
+    filename = 'template_jadwal.csv';
+  } else {
+    return res.status(400).json({ error: 'Invalid template type' });
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+});
+
+// POST /api/admin/reset
+router.post(
+  '/reset',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (_req: any, res: any) => {
+    await prisma.$transaction([
+      prisma.notification.deleteMany({}),
+      prisma.barterOffer.deleteMany({}),
+      prisma.enrollment.deleteMany({}),
+      prisma.user.deleteMany({ where: { role: 'student' } }),
+      prisma.parallelClass.deleteMany({}),
+    ]);
+    
+    // Clear master files
+    const dir = path.join(process.cwd(), 'storage', 'master');
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        fs.unlinkSync(path.join(dir, file));
+      }
+    }
+
+    io.emit('admin-system-reset', { message: 'System has been reset to zero' });
+    res.json({ message: 'Seluruh data berhasil dihapus. Sistem kembali ke nol.' });
+  })
+);
+
+// GET /api/admin/master-files
+router.get(
+  '/master-files',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (_req: any, res: any) => {
+    const dir = path.join(process.cwd(), 'storage', 'master');
+    const files = {
+      students: fs.existsSync(path.join(dir, 'master_students.csv')),
+      classes: fs.existsSync(path.join(dir, 'master_classes.csv'))
+    };
+    res.json(files);
+  })
+);
+
+// DELETE /api/admin/master-files/:type
+router.delete(
+  '/master-files/:type',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req: any, res: any) => {
+    const { type } = req.params;
+    const fileName = type === 'students' ? 'master_students.csv' : 'master_classes.csv';
+    const filePath = path.join(process.cwd(), 'storage', 'master', fileName);
+
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    if (type === 'students') {
+      await prisma.$transaction([
+        prisma.notification.deleteMany({}),
+        prisma.barterOffer.deleteMany({}),
+        prisma.enrollment.deleteMany({}),
+        prisma.user.deleteMany({ where: { role: 'student' } })
+      ]);
+    } else {
+      await prisma.$transaction([
+        prisma.notification.deleteMany({}),
+        prisma.barterOffer.deleteMany({}),
+        prisma.enrollment.deleteMany({}),
+        prisma.parallelClass.deleteMany({})
+      ]);
+    }
+
+    res.json({ message: `Data ${type} berhasil dihapus.` });
   })
 );
 
