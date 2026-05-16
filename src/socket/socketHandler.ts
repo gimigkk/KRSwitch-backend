@@ -2,14 +2,17 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { AuthUser } from '../middleware/authMiddleware';
 
+let onlineUsers = 0;
+
+export function getOnlineCount() {
+  return onlineUsers;
+}
+
 export function setupSocket(io: Server) {
-  let onlineUsers = 0;
-
   io.on('connection', (socket) => {
-    io.emit('online-count', ++onlineUsers);
+    onlineUsers++;
+    io.emit('online-count', onlineUsers);
 
-    // client ambil token dari GET /api/socket-token lalu kirim ke sini
-    // NIM tidak boleh dipercaya langsung dari client tanpa verifikasi
     socket.on('authenticate', (token: string) => {
       try {
         const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
@@ -21,7 +24,8 @@ export function setupSocket(io: Server) {
     });
 
     socket.on('disconnect', () => {
-      io.emit('online-count', --onlineUsers);
+      onlineUsers = Math.max(0, onlineUsers - 1);
+      io.emit('online-count', onlineUsers);
     });
   });
 }

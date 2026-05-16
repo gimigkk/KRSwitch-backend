@@ -39,8 +39,8 @@ model Enrollment {
   id              Int           @id @default(autoincrement())
   nim             String
   parallelClassId Int
-  parallelClass   ParallelClass @relation(fields: [parallelClassId], references: [id], onDelete: Cascade)
   user            User          @relation(fields: [nim], references: [nim], onDelete: Cascade)
+  parallelClass   ParallelClass @relation(fields: [parallelClassId], references: [id], onDelete: Cascade)
 
   @@unique([nim, parallelClassId])
   @@map("enrollments")

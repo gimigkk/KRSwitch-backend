@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import { prisma } from './prisma/db';
 import authRouter from './routes/auth';
 import adminRouter from './routes/admin';
+import adminApiRouter from './routes/adminRoutes';
 import { createOffersRouter } from './routes/offers';
 import { setupSocket } from './socket/socketHandler';
 
@@ -26,6 +27,7 @@ app.use(cookieParser());
 
 app.use('/auth', authRouter);
 app.use('/', adminRouter);
+app.use('/api/admin', adminApiRouter(io));
 app.use('/api/offers', createOffersRouter(io));
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
