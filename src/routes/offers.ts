@@ -15,6 +15,7 @@ import {
 
 export function createOffersRouter(io: Server) {
   const router = Router();
+  router.use(requireAuth);
 
   router.get('/', requireStudent, asyncHandler(async (req: any, res: any) => {
     const offers = await prisma.barterOffer.findMany({
