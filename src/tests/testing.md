@@ -106,7 +106,8 @@ Test untuk dua middleware di `src/middleware/`:
 | Skenario | Yang diharapkan |
 |---|---|
 | Tidak ada cookie `token` | 401, pesan "Not authenticated" |
-| Token tidak valid / expired | 401, cookie di-clear, pesan "Session expired" |
+| Token tidak valid / expired (production domain) | 401, dua cookie di-clear (host-only & production.com), pesan "Session expired" |
+| Token tidak valid / expired (localhost) | 401, HANYA satu cookie host-only di-clear, mencegah browser memblokir session |
 | Token valid tapi pakai secret yang salah | 401 |
 | Token valid dan secret benar | `next()` dipanggil, `req.user` terisi |
 
@@ -173,6 +174,24 @@ Logika matching: offer A cocok dengan offer B kalau `A.myClassId == B.wantedClas
 | New offerer sudah drop kelas | `{ matched: false }` |
 | Ada konflik jadwal setelah swap | `{ matched: false }`, tidak ada DB write |
 | Happy path (semua kondisi terpenuhi) | `{ matched: true }`, kedua offer di-update ke `matched`, enrollment ditukar, 2 notifikasi dibuat, payload `swaps` berisi data yang benar |
+
+---
+
+### `integration/adminRoutes.test.ts`
+
+Test khusus untuk endpoint dashboard admin yang sangat kritikal (penambahan admin, import data, reset sistem).
+
+**1. Admin RBAC Middleware (`requireAdmin`, `requireSuperAdmin`)**
+Memastikan bahwa user biasa (student) tidak bisa mengakses rute admin, dan admin biasa tidak bisa mengakses rute super_admin. Juga memastikan akun admin yang dinonaktifkan (`isActive === false`) akan ditolak masuk.
+
+**2. Master Data Management**
+Test untuk `POST /api/admin/users`, `PUT`, `DELETE`. Memastikan validasi email dan format nama berjalan, serta operasi delete benar-benar menghapus relasi (cascade).
+
+**3. Batch Operations & Destructive Actions**
+Sangat kritikal untuk mencegah data loss di production:
+- **Atomicity (`import-students`, `import-classes`):** Memastikan import file CSV dibungkus dalam `prisma.$transaction`. Jika ada error di tengah jalan, database kembali utuh.
+- **Master Files (`DELETE /api/admin/master-files/:type`):** Memastikan bahwa menghapus file CSV dari trash bin *hanya* menghapus file di direktori `storage/master/`, dan TIDAK MENGHAPUS database.
+- **Production Guard (`seed-random`):** Memastikan endpoint pengacak sistem tidak bisa dijalankan jika `NODE_ENV === 'production'`.
 
 ---
 
