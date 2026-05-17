@@ -14,6 +14,7 @@ import adminApiRouter from './routes/adminRoutes';
 import { createOffersRouter } from './routes/offers';
 import { setupSocket } from './socket/socketHandler';
 import { setActivityIo } from './utils/activity';
+import { csrfProtection } from './middleware/csrf';
 
 const app    = express();
 const server = http.createServer(app);
@@ -50,13 +51,13 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
-// Rate limiting — only in production to protect resources without hindering dev/testing
-if (process.env.NODE_ENV === 'production') {
-  const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false });
-  const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30,  standardHeaders: true, legacyHeaders: false });
-  app.use('/api/', apiLimiter);
-  app.use('/auth/', authLimiter);
-}
+const isProd = process.env.NODE_ENV === 'production';
+const apiLimiter  = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 200  : 1000, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 30   : 100,  standardHeaders: true, legacyHeaders: false });
+app.use('/api/', apiLimiter);
+app.use('/auth/', authLimiter);
+app.use(csrfProtection);
+
 
 app.use('/auth', authRouter);
 app.use('/', adminRouter);
@@ -65,7 +66,6 @@ app.use('/api/offers', createOffersRouter(io));
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[error]', err.message);
-  const isProd = process.env.NODE_ENV === 'production';
   res.status(500).json({ error: isProd ? 'Internal server error' : err.message });
 });
 

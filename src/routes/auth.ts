@@ -8,14 +8,14 @@ import { clearAllAuthCookies } from '../middleware/authMiddleware';
 
 const router = Router();
 
-// --- Constants -------------------------------------------
+// --- Constants ---------------------------------------------
 
 const BACKEND_URL    = process.env.BACKEND_URL  ?? 'http://localhost:5000';
 const FRONTEND_URL   = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 const REDIRECT_URI   = `${BACKEND_URL}/auth/google/callback`;
 const SCOPES         = ['openid', 'email', 'profile'];
 
-// --- Types -------------------------------------------
+// --- Types ---------------------------------------------
 
 interface OAuthContext {
   codeVerifier: string;
@@ -31,7 +31,7 @@ interface JwtPayload {
   picture?: string;
 }
 
-// --- Setup -------------------------------------------
+// --- Setup ---------------------------------------------
 
 const client = new OAuth2Client({
   clientId:     process.env.GOOGLE_CLIENT_ID,
@@ -46,7 +46,7 @@ function redirectWithError(res: Response, error: string, frontendUrl?: string): 
   res.redirect(`${target}/auth/callback?error=${error}`);
 }
 
-// --- Routes -------------------------------------------
+// --- Routes ---------------------------------------------
 
 router.get('/google', async (req: Request, res: Response) => {
   const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync();
@@ -126,8 +126,8 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role, picture: googlePayload.picture };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
-    res.clearCookie('token'); // Kill potential zombie host-only cookie before assigning new valid one
-    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill old ghost explicit-domain cookie
+    res.clearCookie('token'); // Hapus kemungkinan cookie host-only zombie sebelum pasang token baru yang valid
+    res.clearCookie('token', { domain: 'localhost' }); // Hapus paksa cookie localhost lama biar nggak bentrok
     res.cookie('token', sessionToken, {
       httpOnly: true,
       sameSite: 'lax',

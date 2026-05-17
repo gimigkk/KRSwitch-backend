@@ -15,7 +15,7 @@ import { getOnlineCount } from '../socket/socketHandler';
 import { randomizeEnrollments } from '../utils/seeding';
 import { createNotification } from '../controllers/offerController';
 
-// ─── Zod Validation Schemas ──────────────────────────────────────────────────
+// --- Zod Validation Schemas ---------------------------------------------
 const createUserSchema = z.object({
   nim:   z.string().min(1).max(30),
   name:  z.string().min(1).max(100),
@@ -38,10 +38,15 @@ const resetConfirmSchema = z.object({
   confirm: z.literal('RESET_ALL_DATA'),
 });
 
-// Sanitize fields that could be interpreted as spreadsheet formulas (CSV Injection)
+// Bersihkan karakter formula dari CSV biar nggak disalahgunakan sebagai formula injection
 function sanitizeCsv(value: string): string {
   if (/^[=+\-@\t\r]/.test(value)) return `'${value}`;
   return value;
+}
+
+// Hapus karakter '<' dan '>' satu per satu biar nggak ada injection via tag-like sequences
+function stripHtml(str: string): string {
+  return str.replace(/</g, '').replace(/>/g, '');
 }
 
 export default (io: Server) => {
@@ -57,9 +62,9 @@ export default (io: Server) => {
     },
   });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// --- Helpers ---------------------------------------------
 
-// CRIT-1 fix: removed ghost 'admin' role. MED-5 fix: check isActive on every protected request.
+// Perbaikan CRIT-1: role 'admin' bayangan dihapus. Perbaikan MED-5: cek isActive di tiap request yang diproteksi.
 const requireAdmin = asyncHandler(async (req: any, res: any, next: any) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   if (req.user.role !== 'super_admin' && req.user.role !== 'operator') {
@@ -91,7 +96,7 @@ function mapDay(day: string): string {
   return DAY_MAP[d] || d; // Fallback ke string aslinya jika bukan angka 1-7
 }
 
-// ─── Stats ───────────────────────────────────────────────────────────────────
+// --- Stats ---------------------------------------------
 
 // GET /api/admin/stats
 router.get('/stats', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
@@ -106,7 +111,7 @@ router.get('/stats', requireAuth, requireAdmin, asyncHandler(async (_req: any, r
   res.json({ totalStudents, totalClasses, totalEnrollments, activeOffers, successfulTrades, onlineCount });
 }));
 
-// ─── Logs (Real Audit Trail) ────────────────────────────────────────────────
+// --- Logs (Real Audit Trail) ---------------------------------------------
 
 // GET /api/admin/logs
 router.get('/logs', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
@@ -117,14 +122,14 @@ router.get('/logs', requireAuth, requireAdmin, asyncHandler(async (_req: any, re
     });
     res.json(logs);
   } catch (err: any) {
-    console.warn('ActivityLog table not ready or missing:', err.message);
-    res.json([]); // Return empty array to prevent frontend crash
+    console.warn('Tabel ActivityLog belum siap atau hilang:', err.message);
+    res.json([]); // Balikin array kosong biar frontend nggak crash
   }
 }));
 
-// ─── Schedule Upload ─────────────────────────────────────────────────────────
+// --- Schedule Upload ---------------------------------------------
 
-// POST /api/admin/upload-schedule  (Legacy alias)
+// POST /api/admin/upload-schedule (Alias lama)
 // POST /api/admin/import-classes
 router.post(
   ['/upload-schedule', '/import-classes'],
@@ -146,10 +151,7 @@ router.post(
     if (rows.length === 0) return res.status(400).json({ error: 'CSV file is empty or invalid' });
 
 
-
-    const stripHtml = (str: string) => str.replace(/<[^>]*>?/gm, '');
-
-    const data = rows.map((row, idx) => {
+    const parsedClassesData = rows.map((row, idx) => {
       const getVal = (keys: string[]) => {
         for (const key of keys) {
           const foundKey = Object.keys(row).find(k => k.replace(/^\ufeff/, '').trim().toLowerCase() === key.toLowerCase());
@@ -171,28 +173,28 @@ router.post(
       return mapped;
     }).filter(d => d.courseCode && d.classCode);
 
-    if (data.length === 0) {
+    if (parsedClassesData.length === 0) {
       return res.status(400).json({ 
         error: 'No valid class data found in CSV', 
         details: 'Pastikan header CSV sesuai: courseCode, courseName, classCode, day, timeStart, timeEnd, room' 
       });
     }
 
-    // NEW: Validation Mode Check
+    // Cek Mode Validasi
     if (req.query.validate === 'true') {
       return res.json({ 
         message: 'CSV valid dan siap di-import.', 
-        count: data.length,
-        preview: data[0]
+        count: parsedClassesData.length,
+        preview: parsedClassesData[0]
       });
     }
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.parallelClass.deleteMany({});
-      return await tx.parallelClass.createMany({ data, skipDuplicates: true });
+      return await tx.parallelClass.createMany({ data: parsedClassesData, skipDuplicates: true });
     });
     
-    // SAVE FILE TO DISK
+    // Simpan file ke disk
     const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_classes.csv');
     fs.writeFileSync(storagePath, req.file.buffer);
 
@@ -223,9 +225,8 @@ router.post(
         .on('error', reject);
     });
 
-    const stripHtml = (str: string) => str.replace(/<[^>]*>?/gm, '');
 
-    const data = rows.map(row => {
+    const parsedStudentsData = rows.map(row => {
       const getVal = (keys: string[]) => {
         for (const key of keys) {
           const foundKey = Object.keys(row).find(k => k.replace(/^\ufeff/, '').toLowerCase() === key.toLowerCase());
@@ -242,36 +243,36 @@ router.post(
       };
     }).filter(d => d.nim && d.name);
 
-    console.log('Valid students to insert:', data.length);
+    console.log('Valid students to insert:', parsedStudentsData.length);
 
-    if (data.length === 0) return res.status(400).json({ error: 'No valid student data found in CSV' });
+    if (parsedStudentsData.length === 0) return res.status(400).json({ error: 'No valid student data found in CSV' });
 
-    // NEW: Validation Mode Check
+    // Cek Mode Validasi
     if (req.query.validate === 'true') {
       return res.json({ 
         message: 'CSV valid dan siap di-import.', 
-        count: data.length,
-        preview: data[0]
+        count: parsedStudentsData.length,
+        preview: parsedStudentsData[0]
       });
     }
 
-    // Clear old students first (Master Data Reset) inside transaction
-    console.log('Cleaning old students data inside atomic transaction...');
+    // Hapus data mahasiswa lama dulu di dalam transaksi
+    console.log('Hapus data mahasiswa lama di transaksi atomik...');
     const result = await prisma.$transaction(async (tx) => {
       await tx.user.deleteMany({ where: { role: 'student' } });
-      return await tx.user.createMany({ data, skipDuplicates: true });
+      return await tx.user.createMany({ data: parsedStudentsData, skipDuplicates: true });
     });
 
-    // SAVE FILE TO DISK
+    // Simpan file ke disk
     const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_students.csv');
     fs.writeFileSync(storagePath, req.file.buffer);
 
-    io.emit('admin-user-created', { count: data.length });
+    io.emit('admin-user-created', { count: parsedStudentsData.length });
     io.emit('admin-master-files-updated', { type: 'students', exists: true });
 
-    await logActivity('IMPORT_STUDENTS', (req as any).user.nim, `Imported ${data.length} students from CSV.`);
+    await logActivity('IMPORT_STUDENTS', (req as any).user.nim, `Imported ${parsedStudentsData.length} students from CSV.`);
 
-    res.json({ message: `${data.length} data mahasiswa berhasil di-import.`, count: data.length });
+    res.json({ message: `${parsedStudentsData.length} data mahasiswa berhasil di-import.`, count: parsedStudentsData.length });
   })
 );
 
@@ -321,7 +322,7 @@ router.get('/template/:type', requireAuth, requireAdmin, (req: any, res: any) =>
   res.send(csv);
 });
 
-// POST /api/admin/reset  — CRIT-2: requires superAdmin + server-side confirm token
+// POST /api/admin/reset, perlu superAdmin dan server-side confirm token
 router.post(
   '/reset',
   requireAuth,
@@ -336,7 +337,7 @@ router.post(
       prisma.parallelClass.deleteMany({}),
     ]);
     
-    // Clear master files
+    // Hapus file master
     const dir = path.join(process.cwd(), 'storage', 'master');
     if (fs.existsSync(dir)) {
       const files = fs.readdirSync(dir);
@@ -361,11 +362,11 @@ router.get(
   requireAdmin,
   asyncHandler(async (_req: any, res: any) => {
     const dir = path.join(process.cwd(), 'storage', 'master');
-    const files = {
+    const masterFilesStatus = {
       students: fs.existsSync(path.join(dir, 'master_students.csv')),
       classes: fs.existsSync(path.join(dir, 'master_classes.csv'))
     };
-    res.json(files);
+    res.json(masterFilesStatus);
   })
 );
 
@@ -376,7 +377,7 @@ router.delete(
   requireAdmin,
   asyncHandler(async (req: any, res: any) => {
     const { type } = req.params;
-    // HIGH-5 fix: use an explicit map — never derive filenames from user input
+    // Perbaikan HIGH-5: pakai map eksplisit, jangan ambil nama file langsung dari input user
     const FILE_MAP: Record<string, string> = {
       students: 'master_students.csv',
       classes:  'master_classes.csv',
@@ -395,7 +396,7 @@ router.delete(
   })
 );
 
-// ─── Class / Course Management ─────────────────────────────────────────────────
+// --- Class / Course Management ---------------------------------------------
 
 // GET /api/admin/classes
 router.get('/classes', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
@@ -417,7 +418,7 @@ router.get('/classes', requireAuth, requireAdmin, asyncHandler(async (req: any, 
     orderBy: [{ courseCode: 'asc' }, { classCode: 'asc' }],
   });
 
-  const formatted = classes.map(c => ({
+  const formattedClasses = classes.map(c => ({
     id: c.id,
     courseCode: c.courseCode,
     courseName: c.courseName,
@@ -429,7 +430,7 @@ router.get('/classes', requireAuth, requireAdmin, asyncHandler(async (req: any, 
     enrollmentCount: c._count.enrollments
   }));
 
-  res.json(formatted);
+  res.json(formattedClasses);
 }));
 
 // POST /api/admin/classes
@@ -511,7 +512,7 @@ router.delete('/classes/:id', requireAuth, requireAdmin, asyncHandler(async (req
   res.json({ message: 'Kelas berhasil dihapus' });
 }));
 
-// ─── Class Student List ──────────────────────────────────────────────────────
+// --- Class Student List ---------------------------------------------
 
 // GET /api/admin/classes/:id/students
 router.get('/classes/:id/students', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
@@ -523,7 +524,7 @@ router.get('/classes/:id/students', requireAuth, requireAdmin, asyncHandler(asyn
   res.json(enrollments.map(e => e.user));
 }));
 
-// ─── Purge Offers ────────────────────────────────────────────────────────────
+// --- Purge Offers ---------------------------------------------
 
 // DELETE /api/admin/purge-offers
 router.delete('/purge-offers', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
@@ -535,7 +536,7 @@ router.delete('/purge-offers', requireAuth, requireAdmin, asyncHandler(async (re
   res.json({ message: `${result.count} penawaran barter aktif berhasil dihapus.`, count: result.count });
 }));
 
-// ─── Export Recap ─────────────────────────────────────────────────────────────
+// --- Export Recap ---------------------------------------------
 
 // GET /api/admin/export-recap
 router.get('/export-recap', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
@@ -547,7 +548,7 @@ router.get('/export-recap', requireAuth, requireAdmin, asyncHandler(async (_req:
     orderBy: [{ user: { nim: 'asc' } }, { parallelClass: { courseCode: 'asc' } }],
   });
 
-  // MED-6 fix: sanitize fields to prevent CSV injection (formula chars prefixed with ')
+  // Perbaikan MED-6: bersihkan field untuk hindari CSV injection (karakter formula diawali dengan ')
   const header = 'NIM,Nama,Email,Kode Matkul,Nama Matkul,Kelas,Hari,Jam Mulai,Jam Selesai,Ruang\n';
   const rows = enrollments.map(e =>
     [
@@ -572,7 +573,7 @@ router.get('/export-recap', requireAuth, requireAdmin, asyncHandler(async (_req:
   res.send(csv);
 }));
 
-// ─── User / Mahasiswa Management ─────────────────────────────────────────────
+// --- User / Mahasiswa Management ---------------------------------------------
 
 // GET /api/admin/users?search=
 router.get('/users', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
@@ -598,7 +599,7 @@ router.get('/users', requireAuth, requireAdmin, asyncHandler(async (req: any, re
     orderBy: { nim: 'asc' },
   });
 
-  const formatted = users.map(u => ({
+  const formattedStudents = users.map(u => ({
     nim: u.nim,
     name: u.name,
     email: u.email,
@@ -606,10 +607,10 @@ router.get('/users', requireAuth, requireAdmin, asyncHandler(async (req: any, re
     activeBarterCount: u.offeredBarters.length
   }));
 
-  res.json(formatted);
+  res.json(formattedStudents);
 }));
 
-// GET /api/admin/users/:nim  (full detail with enrollments + active barter offers)
+// GET /api/admin/users/:nim (detail lengkap beserta KRS dan penawaran barter aktif)
 router.get('/users/:nim', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const user = await prisma.user.findUnique({
     where: { nim: req.params.nim },
@@ -680,7 +681,7 @@ router.delete('/users/:nim', requireAuth, requireAdmin, asyncHandler(async (req:
   res.json({ message: `Mahasiswa ${req.params.nim} berhasil dihapus dari sistem.` });
 }));
 
-// ─── Enrollment / KRS Management ─────────────────────────────────────────────
+// --- Enrollment / KRS Management ---------------------------------------------
 
 // POST /api/admin/enrollments
 router.post('/enrollments', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
@@ -699,7 +700,7 @@ router.post('/enrollments', requireAuth, requireAdmin, asyncHandler(async (req: 
   res.status(201).json(enrollment);
 }));
 
-// PUT /api/admin/enrollments/:id  —  pindah ke kelas lain (newParallelClassId)
+// PUT /api/admin/enrollments/:id, pindah ke kelas lain (newParallelClassId)
 router.put('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const enrollmentId = parseInt(req.params.id);
   const { newParallelClassId } = req.body;
@@ -722,14 +723,14 @@ router.put('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (re
 
   const notification = await createNotification(prisma, updated.nim, 'admin_enrollment_updated', {
     courseCode: updated.parallelClass.courseCode,
-    oldClassCode: existing.parallelClass?.classCode || 'Unknown', // we didn't include parallelClass in existing, let's fix that below if needed, but wait existing doesn't include it. We should fetch it.
+    oldClassCode: existing.parallelClass?.classCode || 'Unknown', // ambil classCode kelas lama
     newClassCode: updated.parallelClass.classCode
   });
 
   await logActivity('UPDATE_KRS', (req as any).user.nim, `Manual KRS move for ${updated.user.name}: assigned to class ${updated.parallelClass.classCode} (${updated.parallelClass.courseCode}).`);
   
   io.emit('admin-enrollment-updated', updated);
-  // Also notify the student specifically
+  // Kasih tahu mahasiswa yang bersangkutan juga
   io.to(`user-${updated.nim}`).emit('enrollment-updated', updated);
   io.to(`user-${updated.nim}`).emit('new-notification', notification);
   
@@ -761,9 +762,9 @@ router.delete('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async 
   res.json({ message: 'Mata kuliah berhasil di-drop dari KRS.' });
 }));
 
-// ─── Barter Management ───────────────────────────────────────────────────────
+// --- Barter Management ---------------------------------------------
 
-// DELETE /api/admin/offers/:id  —  force-cancel any open barter offer
+// DELETE /api/admin/offers/:id, batalkan paksa penawaran barter yang berstatus open
 router.delete('/offers/:id', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const offerId = parseInt(req.params.id);
 
@@ -799,11 +800,11 @@ router.delete('/offers/:id', requireAuth, requireAdmin, asyncHandler(async (req:
   res.json({ message: `Penawaran barter #${offerId} berhasil dibatalkan secara paksa.` });
 }));
 
-// ─── Override Swap ────────────────────────────────────────────────────────────
+// --- Override Swap ---------------------------------------------
 
 // POST /api/admin/override-swap
 // Body: { nim1, nim2, courseCode }
-// Swaps the parallelClass between nim1 and nim2 for the given courseCode
+// Tukar kelas antara nim1 dan nim2 untuk matkul yang bersangkutan
 router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const { nim1, nim2, courseCode } = req.body;
 
@@ -900,7 +901,7 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
     });
   });
 
-  // log activity uses u1 and u2 which were fetched above
+  // log activity pakai u1 dan u2 yang diambil di atas
 
   await logActivity('ADMIN_OVERRIDE_SWAP', (req as any).user.nim, `FORCED SWAP: ${u1?.name} <-> ${u2?.name} for course ${courseCode}.`);
 
@@ -913,7 +914,7 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
   });
 }));
 
-// ─── Super Admin Routes (Admin Management) ────────────────────────────────────
+// --- Super Admin Routes (Admin Management) ---------------------------------------------
 
 router.get('/admins', requireAuth, requireSuperAdmin, asyncHandler(async (req: any, res: any) => {
   const admins = await prisma.user.findMany({
@@ -927,7 +928,7 @@ router.get('/admins', requireAuth, requireSuperAdmin, asyncHandler(async (req: a
 router.post('/admins', requireAuth, requireSuperAdmin, validate(createAdminSchema), asyncHandler(async (req: any, res: any) => {
   const { name, email, role } = req.body;
 
-  // MED-4 fix: use cryptographically random NIM (not Math.random)
+  // Perbaikan MED-4: pakai crypto random NIM biar aman (bukan Math.random)
   const nim = `ADM-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
   const existing = await prisma.user.findUnique({ where: { email } });

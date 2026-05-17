@@ -1,6 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { mockIo } from './mocks/io';
+import { csrfProtection } from '../middleware/csrf';
 
 // Pakai dynamic import biar vi.mock() di test file sudah di-hoist duluan
 // sebelum route module resolve prisma singleton-nya
@@ -12,6 +13,7 @@ export async function createTestApp() {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
+  app.use(csrfProtection); // no-op in test env (NODE_ENV=test)
 
   app.use('/', adminRouter);
   app.use('/api/admin', adminApiRouter(mockIo as any));

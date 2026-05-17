@@ -10,7 +10,7 @@ export function getOnlineCount() {
 
 export function setupSocket(io: Server) {
   io.on('connection', (socket) => {
-    // HIGH-6 fix: unauthenticated connections get a 10-second window to authenticate
+    // Perbaikan HIGH-6: koneksi tanpa auth dikasih waktu 10 detik buat authenticate
     const authTimeout = setTimeout(() => {
       if (!socket.data.nim) {
         socket.emit('auth-error', { error: 'Authentication timeout' });
@@ -24,7 +24,7 @@ export function setupSocket(io: Server) {
         socket.join(`user-${payload.nim}`);
         socket.data.nim = payload.nim;
         clearTimeout(authTimeout);
-        // Only count authenticated users
+        // Hanya hitung user yang terautentikasi
         onlineUsers++;
         io.emit('online-count', onlineUsers);
       } catch {
@@ -35,7 +35,7 @@ export function setupSocket(io: Server) {
 
     socket.on('disconnect', () => {
       if (socket.data.nim) {
-        // Only decrement for authenticated users
+        // Hanya kurangi hitungan untuk user yang terautentikasi
         onlineUsers = Math.max(0, onlineUsers - 1);
         io.emit('online-count', onlineUsers);
       }

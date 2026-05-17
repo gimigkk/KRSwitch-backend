@@ -225,7 +225,7 @@ export function createOffersRouter(io: Server) {
 
     await logActivity('BARTER_CANCELLED', userNim, `Cancelled their own open barter offer (Offer ID: ${offerId}).`);
 
-    // Fetch the generated notification to send via socket
+    // Ambil notifikasi yang di-generate buat dikirim lewat socket
     const notification = await prisma.notification.findFirst({
       where: { recipientNim: userNim, type: 'barter_cancelled' },
       orderBy: { createdAt: 'desc' }

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { prisma } from '../prisma/db';
 
-// --- Schemas -------------------------------------------
+// --- Schemas ---------------------------------------------
 
 export const createOfferSchema = z.object({
   myClassId: z.number().int().positive(),
@@ -78,7 +78,7 @@ export const adminOverrideSwapDataSchema = z.object({
   newClassCode: z.string(),
 });
 
-// --- Types -------------------------------------------
+// --- Types ---------------------------------------------
 
 export type StaleCancelledOffer     = z.infer<typeof staleCancelledOfferSchema>;
 export type BarterMatchedAsOffererData = z.infer<typeof barterMatchedAsOffererDataSchema>;
@@ -114,9 +114,9 @@ export type EnrollmentWithClass = {
   parallelClass: ClassSchedule & { id: number; classCode: string; courseCode: string };
 };
 
-// --- Helpers -------------------------------------------
+// --- Helpers ---------------------------------------------
 
-// interval overlap: A.start < B.end && B.start < A.end
+// irisan interval: A.start < B.end && B.start < A.end
 // aman pakai perbandingan string karena format "HH:MM" zero-padded
 export function hasScheduleConflict(a: ClassSchedule, b: ClassSchedule): boolean {
   if (a.day !== b.day) return false;

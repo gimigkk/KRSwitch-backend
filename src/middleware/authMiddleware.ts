@@ -18,9 +18,7 @@ declare global {
   }
 }
 
-/**
- * Aggressively clear all possible auth cookie scopes to prevent zombie/duplicate cookie lockouts
- */
+// Hapus semua kemungkinan cookie auth biar nggak ada zombie cookie yang bikin lockout
 export function clearAllAuthCookies(res: Response): void {
   res.clearCookie('token');
   res.clearCookie('token', { domain: 'localhost' });
@@ -39,7 +37,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  // Extract all tokens sent by the browser to bypass zombie/duplicate cookie lockouts
+  // Ambil semua token dari cookie buat hindari bentrok zombie cookie
   const tokens = cookieHeader
     .split(';')
     .map(c => c.trim())
@@ -51,12 +49,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  // Try verifying all provided tokens until we find a valid and active one
+  // Coba verifikasi semua token sampai ketemu yang valid dan aktif
   for (const token of tokens) {
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
       
-      // Fast active session lookup inside database
+      // Cek status aktif user langsung di database
       const dbUser = await prisma.user.findUnique({
         where: { email: payload.email },
         select: { isActive: true }
@@ -68,17 +66,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       }
 
       if (!dbUser) {
-        continue; // User is deleted, try the next token (if any)
+        continue; // User kehapus di DB, coba token berikutnya
       }
 
       req.user = payload;
       return next(); // Found a valid, active token, proceed
     } catch {
-      continue; // This token is invalid/expired (a zombie), try the next one
+      continue; // Token basi atau invalid, coba token berikutnya
     }
   }
 
-  // If we exhaust all tokens and none are valid or active, clear them and return 401
+  // Kalau semua token habis dan nggak ada yang valid, hapus semua cookie dan balikin 401
   clearAllAuthCookies(res);
   return res.status(401).json({ error: 'Session expired, please log in again' });
 }

@@ -1,12 +1,23 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/authMiddleware';
 import { asyncHandler } from '../middleware/helpers';
 import { prisma } from '../prisma/db';
 
 const router = Router();
 
-// --- General -------------------------------------------
+// Rate limiter langsung di router ini biar CodeQL bisa trace-nya tanpa lintas modul
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 300 : 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+router.use(limiter);
+
+// --- General ---------------------------------------------
+
 
 router.get('/health', (_req, res) => {
   res.json({ status: 'OK', message: 'KRSwitch Backend Running' });

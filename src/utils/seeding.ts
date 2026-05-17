@@ -7,7 +7,7 @@ interface SeedingResult {
 }
 
 export async function randomizeEnrollments(): Promise<SeedingResult> {
-  // 1. Fetch data
+  // 1. Ambil data
   const students = await prisma.user.findMany({
     where: { role: 'student' }
   });
@@ -19,7 +19,7 @@ export async function randomizeEnrollments(): Promise<SeedingResult> {
     throw new Error('Tidak ada data mahasiswa atau kelas untuk diacak.');
   }
 
-  // 2. Clear existing dynamic data
+  // 2. Bersihin data dinamis lama
   console.log('Clearing old enrollments/offers...');
   await prisma.$transaction([
     prisma.notification.deleteMany({}),
@@ -27,7 +27,7 @@ export async function randomizeEnrollments(): Promise<SeedingResult> {
     prisma.enrollment.deleteMany({}),
   ]);
 
-  // 3. Process classes
+  // 3. Kelompokin kelas per jenis matkul
   const courseCodes = Array.from(new Set(classes.map(c => c.courseCode)));
   const courseMap: Record<string, { types: Record<string, any[]> }> = {};
 
@@ -44,14 +44,14 @@ export async function randomizeEnrollments(): Promise<SeedingResult> {
     courseMap[c.courseCode].types[classType].push({ ...c, classType, classNum });
   });
 
-  // Sort sections by classNum for consistent round-robin
+  // Urutkan kelas biar round-robin konsisten
   for (const code of courseCodes) {
     for (const type in courseMap[code].types) {
       courseMap[code].types[type].sort((a, b) => a.classNum - b.classNum);
     }
   }
 
-  // 4. Assign Round-Robin
+  // 4. Bagi kelas pakai cara Round-Robin
   const enrollments: { nim: string; parallelClassId: number }[] = [];
   console.log(`Course codes found: ${courseCodes.join(', ')}`);
 
@@ -68,16 +68,16 @@ export async function randomizeEnrollments(): Promise<SeedingResult> {
         continue;
       }
 
-      // Assign Lecture (K)
+      // Masukin kelas Kuliah (K)
       const k = kSections[i % kSections.length];
       enrollments.push({ nim: student.nim, parallelClassId: k.id });
       assignedForThisStudent++;
 
-      // Assign Lab (P or R) if exists
+      // Masukin kelas Praktikum (P atau R) kalau ada
       const pracKey = 'P' in types ? 'P' : 'R' in types ? 'R' : null;
       if (pracKey) {
         const pSections = types[pracKey];
-        // Kn -> Pn matching if counts are equal, else independent round-robin
+        // Cocokin Kn -> Pn kalau jumlah kelas sama, kalau beda pakai round-robin independen
         const p = (pSections.length === kSections.length)
           ? (pSections.find(p => p.classNum === k.classNum) || pSections[i % pSections.length])
           : pSections[i % pSections.length];
@@ -91,7 +91,7 @@ export async function randomizeEnrollments(): Promise<SeedingResult> {
 
   console.log(`Total generated enrollments: ${enrollments.length}`);
 
-  // 5. Bulk Insert
+  // 5. Bulk Insert data enrollments
   const chunkSize = 500;
   for (let i = 0; i < enrollments.length; i += chunkSize) {
     await prisma.enrollment.createMany({
