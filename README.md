@@ -1,42 +1,31 @@
-# 🛡️ KRSwitch Backend — High-Performance Schedule Exchange Engine
+# KRSwitch Backend — Schedule Exchange API Engine
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Node.js-v20+-43853D?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js Badge" />
-  <img src="https://img.shields.io/badge/Express-v5.2-000000?style=for-the-badge&logo=express&logoColor=white" alt="Express Badge" />
-  <img src="https://img.shields.io/badge/Prisma-v7.3-2D3748?style=for-the-badge&logo=prisma&logoColor=white" alt="Prisma Badge" />
-  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL Badge" />
-  <img src="https://img.shields.io/badge/Socket.io-v4.8-010101?style=for-the-badge&logo=socket.io&logoColor=white" alt="Socket.io Badge" />
-  <img src="https://img.shields.io/badge/Vitest-v4.1-6E9F18?style=for-the-badge&logo=vitest&logoColor=white" alt="Vitest Badge" />
-</p>
-
-Welcome to the **KRSwitch Backend**, the core high-performance transaction and matchmaking engine powering the Class Barter System. Engineered for high concurrency, robust security, and millisecond-level responsiveness, this engine manages parallel class allocations, automates schedule swaps, secures administrative operations, and synchronizes system states in real time.
+This service manages parallel class schedules, processes atomic barter exchanges, secures administrative setups, and syncs real-time events over WebSockets.
 
 ---
 
-## 🚀 Key Architectural Pillars
+## 🛠️ System Architectures
 
-### 1. The Two-Way Atomic Matchmaking Engine
-The heart of KRSwitch is an auto-matching algorithm running in a strictly isolated, atomic database transaction (`prisma.$transaction`).
-* **Conflict Isolation**: Before executing any swap, the engine calculates schedule conflicts (`A.start < B.end && B.start < A.end`) based on day/time overlap in `HH:MM` zero-padded format.
-* **Auto-Purge & Cascade**: Once a swap completes, all other pending offers made by the participating users that conflict with their newly assigned schedules, or correspond to classes they no longer hold, are automatically marked as `cancelled` with specific reasons (`no_longer_enrolled` or `schedule_conflict`).
-* **Race Condition Protection**: Concurrent takes of the same offer are blocked database-side. The first request locks the record, and subsequent requests are rejected gracefully with explicit API errors.
+### 1. Two-Way Atomic Matchmaking
+The matchmaking logic runs inside a transactional context (`prisma.$transaction`) to prevent concurrency race conditions:
+* **Conflict Prevention**: Prior to executing schedule swaps, the engine checks time overlaps (`startA < endB && startB < endA`) based on days and hours formatted in `HH:MM`.
+* **Cascade Cancellation**: Upon a successful swap, all other open offers owned by the participants that conflict with their newly assigned schedules, or reference sections they no longer hold, are automatically marked as `cancelled` under reasons `no_longer_enrolled` or `schedule_conflict`.
+* **Race Condition Blocks**: When multiple HTTP POST requests attempt to `/take` the same offer at the same millisecond, database-level locking ensures only the first request succeeds while subsequent requests return a `400 Bad Request` with an explicit message.
 
-### 2. Aggressive Session & Zombie Cookie Hardening
-To prevent persistent session "zombie" lockouts common with multi-scope local dev setups and subdomains, KRSwitch implements a multi-layered cookie clearing strategy:
-* **Scope purges**: Active requests parsing tokens will traverse and clear cookies bound to host-only scopes, explicit IP addresses, and custom production domains.
-* **Multi-token Loop**: If the browser sends duplicate/conflicting `token` headers (often a mix of stale and active cookies), the authentication middleware evaluates them sequentially until a valid, active session is found, preventing arbitrary session blockouts.
-* **Active Status Guard**: Every protected route checks `isActive === true` on the database level, meaning disabled admins or banned students are instantly blocked even if their JWT has not expired.
+### 2. Session Management & Cookie Hardening
+To prevent persistent session issues across localhost and subdomain boundaries, the authentication pipeline uses the following strategies:
+* **Domain Purging**: Stale authenticated cookies are proactively cleared from both host-only, localhost subdomains, and configured remote origins during logout and invalid checks.
+* **Token Loop**: If the request headers contain duplicate or stale tokens, the verification middleware parses them in sequence until a valid, active session is identified.
+* **Status Checks**: Route guards check `isActive === true` inside the database, immediately revoking access from disabled user records regardless of token expiration.
 
-### 3. CSV Import Transaction Guarantee (Atomicity)
-Administrative CSV bulk uploads (`/import-students`, `/import-classes`) are executed inside transactional bounds.
-* **Atomic Rollbacks**: If a single student NIM formatting, class time pattern (`HH:MM`), or database constraint fails midway through a 1,000-row file, the transaction rolls back completely, keeping the system clean.
-* **HTML Stripping & CSV Injection Guard**: Every string imported via CSV is stripped of malicious HTML tags and validated against potential spreadsheet injection attacks by sanitizing prefix formula characters (`=`, `+`, `-`, `@`).
+### 3. Atomic Database Operations
+Administrative CSV imports (`/import-students`, `/import-classes`) are atomic:
+* **Transaction Rollback**: If any record fails schema constraint validation, the transaction rolls back completely to protect integrity.
+* **CSV Injection Guard**: Formulas prefixes (`=`, `+`, `-`, `@`) are stripped or escaped during parsing to guard spreadsheet exports against formula injections.
 
 ---
 
-## 📊 Database Schema (Prisma Blueprint)
-
-The backend utilizes **Prisma ORM** mapped onto a **PostgreSQL** instance. Below is the relational structure:
+## 📊 Database Schema
 
 ```mermaid
 erDiagram
@@ -104,96 +93,38 @@ erDiagram
 
 ---
 
-## ⚡ Seeding & High-Load Simulation Suites
-
-KRSwitch is equipped with sophisticated simulation tools that let developers test concurrency and marketplace behavior.
+## ⚡ Simulation & Seeding Utilities
 
 ### 1. Seeding Engine (`enhanced-seed.js`)
-An advanced algorithm designed to seed the system with **151 students** and **7 courses**, simulating a capacity-capped war KRS:
-* **Matched-Pair Optimization**: Solves the section distribution by aligning K (Lecture) and P/R (Practical) sections under a capacity constraint. It matches `Kn → Pn/Rn` pairs with perfect distribution (achieving 100% matched pairings for courses with symmetric section counts).
-* **Timetable Overlaps**: Respects actual schedule overlaps (e.g., KOM120G-K3 overlaps with parts of KOM120C and KOM120H), ensuring seeded schedules represent authentic conflicts.
-* **Autogenerator**: Dynamically updates template CSVs in `/mock_data` to match the exact generated database state.
+An algorithm designed to populate the system with 151 students across 7 courses under strict constraints:
+* **Section Distribution**: Auto-calculates capacity distributions, resolving section assignments (`Kn` to `Pn/Rn` classes) symmetrically with zero conflicts.
+* **CSV Sync**: Outputs generated layouts back into mock CSV files within `/mock_data` to synchronize source structures.
 
-### 2. Load Simulator (`simulator.js`)
-An advanced marketplace load simulation tool simulating high concurrency, realistic user behaviors, and network bottlenecks:
-* **Persona Profiles**: Instantiates virtual users acting under four distinct personas:
-  * 🔴 **Aggressive (15%)**: Highly active, rapid decisions, short think times.
-  * 🟡 **Moderate (40%)**: Balanced browse/create/take activity.
-  * 🔵 **Passive (30%)**: Cautious browsing, long think times.
-  * 🟢 **Lurkers (15%)**: Heavy browsing, rarely acts.
-* **Race Condition Generator**: Triggers controlled, staggered API requests to `/take` the same offer within a 100ms window, stressing the atomic database transactions and logging metrics.
-* **Telemetry Reporting**: Calculates average response times, p95 and p99 percentiles, throughput rates, network timeouts, and success/failure ratios.
+### 2. High-Load Simulator (`simulator.js`)
+A CLI load testing client designed to stress backend transactional APIs under load profiles:
+* **User Personas**: Configures concurrent actors across 4 distinct behavioral sets (Aggressive, Moderate, Passive, Lurker) with variable think times and browse/take weight ratios.
+* **Race Simulator**: Staggers concurrent `/take` requests inside a 100ms window, collecting success rates and percentiles.
+* **Telemetry**: Outputs avg latency, throughput, and p95/p99 latency indexes.
 
 ---
 
-## 📁 Directory Structure Tour
+## ⚙️ Local Development & Setup
 
-```
-KRSwitch-backend/
-├── prisma/
-│   ├── dev.db                 # Local development SQLite (fallback)
-│   └── schema.prisma          # PostgreSQL production blueprint
-├── src/
-│   ├── controllers/
-│   │   └── offerController.ts # Barter offers, swap transactions, conflict logic
-│   ├── middleware/
-│   │   ├── authMiddleware.ts  # Token loop, multi-scope cookie clears, active checks
-│   │   └── helpers.ts         # Async handler wrappers, validator helpers
-│   ├── routes/
-│   │   ├── admin.ts           # Basic client stats, health, tokens, notifications
-│   │   ├── adminRoutes.ts     # CRUD, CSV Imports, Overrides, SuperAdmin settings
-│   │   ├── auth.ts            # Google OAuth PKCE flow, session issues, logouts
-│   │   └── offers.ts          # Core student barter API handlers
-│   ├── socket/
-│   │   └── socketHandler.ts   # WebSocket token validation & room attachments
-│   ├── utils/
-│   │   ├── activity.ts        # Real-time Audit Trail Logger
-│   │   └── seeding.ts         # Enrollment shuffling tools
-│   ├── server.ts              # Express initialization, middlewares & WS setup
-│   └── tests/                 # Full unit and integration testing suite
-├── enhanced-seed.js           # Matched-pair database seeder
-├── simulator.js               # Concurrency & load simulator
-└── Dockerfile                 # Multi-stage production container build
-```
-
----
-
-## 🛠️ Installation & Local Setup
-
-### 1. Prerequisites
-* **Node.js** 20.x or higher
-* **npm** or **yarn**
-* **PostgreSQL** database (Docker or local instance)
-
-### 2. Configure Environment Variables
-Create a `.env` file in the backend root directory:
-
+### 1. Configure Environment Variables
+Create a `.env` file in the root backend directory:
 ```env
-# Server Config
 PORT=5000
 NODE_ENV=development
-
-# Database Connection
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/krswitch?schema=public"
-
-# Authentication Secrets
-JWT_SECRET="generate_a_long_random_cryptographic_string_here"
-
-# Google OAuth Credentials (PKCE)
-GOOGLE_CLIENT_ID="your_google_oauth_client_id.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET="your_google_oauth_client_secret"
-
-# Client Routing URLs
+JWT_SECRET="use_a_secure_random_key"
+GOOGLE_CLIENT_ID="google_oauth_client_id"
+GOOGLE_CLIENT_SECRET="google_oauth_client_secret"
 BACKEND_URL="http://localhost:5000"
-CORS_ORIGIN="http://localhost:5173"
 FRONTEND_URL="http://localhost:5173"
-
-# Cookie Scopes
 COOKIE_DOMAIN="localhost"
 ```
 
-### 3. Setup Commands
-
+### 2. Command Reference
 ```bash
 # Install dependencies
 npm install
@@ -204,73 +135,49 @@ npm run migrate
 # Run database seed
 npm run seed:barter
 
-# Start in development mode (with auto-reload)
+# Run in watch mode
 npm run dev
 ```
 
 ---
 
-## 🧪 Testing Suite Guide
+## 🧪 Testing Guidelines
 
-KRSwitch Backend features a comprehensive testing pipeline powered by **Vitest** and **Supertest** with mock database layers.
-
+Unit and integration tests are powered by **Vitest** and **Supertest**:
 ```bash
-# Run all tests once
+# Run tests
 npm test
 
-# Run tests in hot-reload (watch) mode
-npm run test:watch
-
-# Generate test coverage report
+# Generate coverage:
 npm run test:coverage
 ```
-
-### Test Structure Layout
-* **Unit Tests (`src/tests/unit/`)**: Test functions in isolation. Includes timetable overlaps checking (`offerController.test.ts`), atomic matchmaking validations (`autoMatch.test.ts`), and authorization token parsing (`middleware.test.ts`).
-* **Integration Tests (`src/tests/integration/`)**: Fully mocks the Prisma database client and runs API requests using Supertest, verifying response headers, cookie settings, Socket updates, and transaction rollbacks.
+*   **Unit Tests (`src/tests/unit/`)**: Validates logical models, overlapping intervals, and signature validations.
+*   **Integration Tests (`src/tests/integration/`)**: Evaluates HTTP routes, cookie injection payloads, and transactional rollbacks.
 
 ---
 
-## 📡 WebSocket API reference
+## 📡 WebSocket Event API
 
-The WebSocket server runs over **Socket.IO** and implements client authentication:
+WebSockets run over **Socket.IO** with mandatory token validations:
 
-### 1. Authentication Handshake
-Clients must request a short-lived token from `GET /api/socket-token` and send it inside `authenticate` within 10 seconds of connection:
+### 1. Connection Handshake
+Clients must request a token from `GET /api/socket-token` and submit it inside the `authenticate` channel within 10 seconds of socket connection:
 ```js
 socket.emit('authenticate', socketToken);
 ```
-Unauthenticated connections are automatically disconnected. Authenticated clients are bound to a private room: `user-${nim}`.
 
-### 2. Emitted Events (Broadcasts)
-* `online-count` *(integer)*: Current active user count.
-* `new-offer` *(object)*: Triggered when a student publishes an offer.
-* `offer-taken` *(object)*: Emitted when an offer is matched or cancelled.
-* `enrollments-swapped` *(object)*: Live updates of swapped participants schedules.
-
----
-
-## 🚀 Production Guidelines & Docker
-
-For production rollouts, the backend includes a optimized Docker setup utilizing multi-stage builds.
-
-### 1. Build & Run via Docker Compose
-To launch the backend, a PostgreSQL DB, and secure settings together:
-
-```bash
-docker-compose up -d --build
-```
-
-### 2. Production Security Optimizations
-* **Helmet Middleware**: Configured to restrict opener and resource policies securely while facilitating OAuth popups.
-* **Rate Limiting**: In production (`NODE_ENV=production`), rate limits protect endpoints:
-  * `/api/*`: Capped at **200 requests per 15 minutes**.
-  * `/auth/*`: Capped at **30 requests per 15 minutes** to prevent brute-forcing.
-* **CORS Origin Array**: Strictly resolves incoming request origins to match authorized local and remote host headers.
+### 2. Socket Events
+*   `online-count` *(integer)*: Returns total active user connections.
+*   `new-offer` *(object)*: Triggered when an offer is posted.
+*   `offer-taken` *(object)*: Broadcasted when an offer is swapped or cancelled.
+*   `enrollments-swapped` *(object)*: Emitted upon successful trades.
 
 ---
 
-*KRSwitch Backend is built for production reliability. For issues or contributions, check out the repository issues.*
+## 🚀 Production Configuration
+*   **Security Headers**: Configured via Helmet to permit Google OAuth callback windows.
+*   **Rate Limits**: Capped at 200 requests per 15 minutes for `/api/*` and 30 requests per 15 minutes for `/auth/*`.
+*   **Docker Deployment**: Use `docker-compose up -d --build` to deploy services alongside PostgreSQL.
 
 ---
 

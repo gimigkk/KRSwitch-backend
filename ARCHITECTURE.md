@@ -1,151 +1,148 @@
-# 📐 KRSwitch — Master System Architecture & Data Flows
+# KRSwitch — System Architecture & Data Flows
 
-Welcome to the central system architecture document for **KRSwitch**. This blueprint outlines how the frontend, backend, database, and real-time WebSocket communication channels interact. It serves as an interactive map for onboarding developers to understand the lifecycle of data, authentication states, and transactional barter operations.
+This document details the system architecture, authentication lifecycles, and atomic transactional flows for the KRSwitch platform.
 
 ---
 
-## 🌐 1. High-Level System Topology
+## 1. System Topology
 
-KRSwitch is built on a decoupled, real-time client-server architecture. The following diagram illustrates how the student/admin browsers, the React 19/Vite 7 frontend, the Express 5 backend server, Socket.IO WebSockets, PostgreSQL, and Google OAuth 2.0 PKCE interact:
+KRSwitch is a real-time, decoupled client-server application. The diagram below maps the components, network boundaries, and database paths:
 
 ```mermaid
 graph TD
     %% User Nodes
-    Student["👤 Student Browser"]
-    Admin["👑 Admin Browser"]
+    Student["Student Browser"]
+    Admin["Admin Browser"]
 
     %% Frontend Group
-    subgraph FrontendApp ["🎨 Client (React 19 + Vite 7 + Tailwind CSS v4)"]
+    subgraph FrontendApp ["Client (React 19 + Vite 7 + Tailwind CSS v4)"]
         UI["React Component Tree"]
         WSClient["Socket.IO Client"]
         Axios["Axios API Client"]
     end
 
     %% Backend Group
-    subgraph BackendApp ["🛡️ Server (Express 5 + Node 20)"]
+    subgraph BackendApp ["Server (Express 5 + Node 20)"]
         Express["Express API Server"]
         WSServer["Socket.IO Server"]
         PrismaClient["Prisma ORM Client"]
-        AuthMiddleware["Auth & Cookie Hardening Middleware"]
+        AuthMiddleware["Auth Middleware"]
     end
 
     %% External & DB
-    GoogleAuth["🔑 Google OAuth 2.0 (PKCE)"]
-    Postgres[("🐘 PostgreSQL 16 DB")]
+    GoogleAuth["Google OAuth 2.0 (PKCE)"]
+    Postgres[("PostgreSQL 16 DB")]
 
     %% Relations
-    Student -->|Interacts| UI
-    Admin -->|Interacts| UI
+    Student --> UI
+    Admin --> UI
     
-    UI -->|API Requests| Axios
-    UI -->|Real-Time State| WSClient
+    UI --> Axios
+    UI --> WSClient
     
-    Axios -->|HTTP HTTPS| AuthMiddleware
-    AuthMiddleware -->|Validated Request| Express
-    WSClient <-->|Bidirectional WebSockets| WSServer
+    Axios --> AuthMiddleware
+    AuthMiddleware --> Express
+    WSClient <--> WSServer
     
-    Express -->|Query / Mutate| PrismaClient
-    PrismaClient <-->|TCP Connections| Postgres
+    Express --> PrismaClient
+    PrismaClient <--> Postgres
     
-    Express <-->|PKCE Code Verify| GoogleAuth
-    UI <-->|OAuth Redirection| GoogleAuth
+    Express <--> GoogleAuth
+    UI <--> GoogleAuth
 ```
 
 ---
 
-## 🔑 2. Authentication & Session Hardening Flow
+## 2. Authentication & Session Validation Flow
 
-To eliminate persistent "zombie" session lockouts across varying browser contexts, localhost domains, and subdomains, KRSwitch implements a multi-layered session validation and cookie purging routine:
+To prevent session locking due to duplicate browser scopes (e.g., mixing host-only and `localhost` subdomains), the authentication service uses a sequential cookie parsing loop and targeted scope purge:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as 👤 User Browser
-    participant FE as 🎨 React Frontend
-    participant BE as 🛡️ Express Backend
-    participant GO as 🔑 Google OAuth
+    actor User as User Browser
+    participant FE as React Frontend
+    participant BE as Express Backend
+    participant GO as Google OAuth
 
-    User->>FE: Click "Login with Google"
-    FE->>BE: GET /auth/google (Request challenge)
-    BE-->>BE: Generate Code Verifier & Cryptographic State
-    BE-->>User: Set short-lived 'oauth_ctx' cookie (httpOnly, Secure, SameSite=Lax)
-    BE-->>User: Redirect to Google OAuth screen
-    User->>GO: Grant permissions
-    GO-->>User: Redirect to /auth/google/callback?code=CODE&state=STATE
-    User->>BE: GET /auth/google/callback
-    BE-->>BE: Validate 'oauth_ctx' state parameter
-    BE->>GO: POST /token (Verify Code Challenge)
-    GO-->>BE: Return ID Token & Account Details
-    BE-->>BE: DB lookup: is student/admin active? (isActive === true)
+    User->>FE: Click Login
+    FE->>BE: GET /auth/google (Request PKCE challenge)
+    BE-->>BE: Generate Code Verifier & cryptographic state
+    BE-->>User: Set short-lived 'oauth_ctx' cookie (HttpOnly, Secure, SameSite=Lax)
+    BE-->>User: Redirect to Google
+    User->>GO: Authenticate & Authorize
+    GO-->>User: Redirect to callback with code & state
+    User->>BE: GET /auth/google/callback?code=CODE&state=STATE
+    BE-->>BE: Verify 'oauth_ctx' state parameter
+    BE->>GO: POST /token (Exchange code)
+    GO-->>BE: Return profile details
+    BE-->>BE: DB check: User isActive === true
     
-    Note over BE,User: 🛡️ AGGRESSIVE COOKIE PURGE INITIATED
-    BE-->>User: Clear cookie 'token' (on host-only, localhost, IP, and production domain scopes)
-    
-    BE-->>User: Set new JWT session 'token' cookie (7d expiry, HttpOnly, SameSite=Lax)
-    BE-->>User: Redirect back to FE with ?success=true
-    FE->>User: Launch popup callback & close window
-    FE->>BE: GET /api/me (Fetch profile)
-    BE->>User: Parse cookie list sequentially (Loop tokens to bypass ghost cookies)
-    BE-->>FE: Return active User profile context
+    Note over BE,User: Clear stale 'token' cookies across localhost and host domains
+    BE-->>User: Set new JWT session 'token' cookie (7d, HttpOnly, SameSite=Lax)
+    BE-->>User: Redirect to FE with ?success=true
+    FE->>User: Close OAuth popup
+    FE->>BE: GET /api/me (Request profile context)
+    BE->>User: Parse cookie list (loops tokens to bypass ghost cookies)
+    BE-->>FE: Return user context
 ```
 
 ---
 
-## ⚡ 3. Atomic Barter Matchmaking Engine Flow
+## 3. Atomic Barter Matchmaking Engine
 
-The barter matchmaking process executes inside an isolated database-level transaction (`prisma.$transaction`). It checks for schedule conflicts, swaps class enrollments, and cascades automatic cancellations of stale/conflicting offers:
+Barter matching runs in a PostgreSQL transaction (`prisma.$transaction`) to block race conditions. The logic below determines if a trade is executed immediately or placed in the open ledger:
 
 ```mermaid
 flowchart TD
-    %% Define styles
     classDef startStop fill:#1b1b1b,stroke:#059669,stroke-width:2px,color:#fff;
     classDef process fill:#2a2a2a,stroke:#374151,stroke-width:1px,color:#fff;
     classDef decision fill:#1e293b,stroke:#047857,stroke-width:1.5px,color:#fff;
 
-    Start([👤 Student submits New Barter Offer]):::startStop
-    Start --> InitTx[1. Initialize isolated database transaction 'prisma.$transaction']:::process
-    InitTx --> LockDB[2. DB-level Lock: Find matching open counter-offer <br> 'A.myClassId === B.wantedClassId && A.wantedClassId === B.myClassId']:::process
+    Start([Student creates Barter Offer]):::startStop
+    Start --> InitTx[1. Initialize isolated prisma.$transaction]:::process
+    InitTx --> LockDB[2. Query counter-offer: myClassId === wantedClassId && wantedClassId === myClassId]:::process
     
-    LockDB --> MatchExist{3. Counter-Offer <br> exists? }:::decision
+    LockDB --> MatchExist{3. Matching counter-offer exists?}:::decision
     
-    MatchExist -- No --> SaveOpen[4. Save as 'open' offer in barter_offers table]:::process
-    SaveOpen --> EmitNew[5. Broadcast Socket event: 'new-offer']:::process
+    MatchExist -- "No" --> SaveOpen[4. Create status: open barter offer]:::process
+    SaveOpen --> EmitNew[5. Broadcast Socket.IO event: new-offer]:::process
     EmitNew --> SuccessReturn([End: Offer published]):::startStop
 
-    MatchExist -- Yes --> ValidateActive{5. Are both students <br> still enrolled in <br> their respective classes? }:::decision
+    MatchExist -- "Yes" --> ValidateActive{5. Both participants enrolled in expected sections?}:::decision
     
-    ValidateActive -- No --> RollbackTx[6. Terminate Transaction & Rollback DB state]:::process
+    ValidateActive -- "No" --> RollbackTx[6. Abort transaction & Rollback state]:::process
     RollbackTx --> ReturnFail([End: Match skipped, offer remains open]):::startStop
 
-    ValidateActive -- Yes --> ScheduleCheck{6. Calculate conflicts: <br> Does swapped schedule <br> overlap with any existing <br> enrollment for either user? }:::decision
+    ValidateActive -- "Yes" --> ScheduleCheck{6. Swapped schedules overlap for either user?}:::decision
 
-    ScheduleCheck -- Yes (Conflict) --> RollbackTx
+    ScheduleCheck -- "Yes" --> RollbackTx
     
-    ScheduleCheck -- No (Success) --> SwapEnrollments[7. Swap enrollments in database <br> Update 'parallelClassId' for both students]:::process
-    SwapEnrollments --> UpdateOfferStatus[8. Update status of both offers to 'matched' <br> Map takers and timestamps]:::process
-    UpdateOfferStatus --> CancelStale[9. Execute cancelStaleOffers: <br> Cancel other open offers that are now <br> obsolete (no longer enrolled) <br> or cause schedule conflicts]:::process
-    CancelStale --> CreateNotifs[10. Insert dynamic notification records for both users]:::process
-    CreateNotifs --> CommitTx[11. Commit transaction atomically to PostgreSQL]:::process
-    CommitTx --> EmitSuccess[12. Broadcast WS events: <br> - 'offer-taken' <br> - 'enrollments-swapped' <br> - Send notification packet to private rooms]:::process
-    EmitSuccess --> EndSuccess([End: Atomic Barter Complete!]):::startStop
+    ScheduleCheck -- "No" --> SwapEnrollments[7. Swap parallelClassId values in enrollments table]:::process
+    SwapEnrollments --> UpdateOfferStatus[8. Update statuses of both offers to matched]:::process
+    UpdateOfferStatus --> CancelStale[9. Run cancelStaleOffers: cancel other pending conflicting offers]:::process
+    CancelStale --> CreateNotifs[10. Generate system notification records]:::process
+    CreateNotifs --> CommitTx[11. Commit PostgreSQL transaction]:::process
+    CommitTx --> EmitSuccess[12. Broadcast Socket.IO events: offer-taken & enrollments-swapped]:::process
+    EmitSuccess --> EndSuccess([End: Swap complete]):::startStop
 ```
 
 ---
 
-## 📡 4. Real-Time WebSockets Event Topology
+## 4. WebSocket Event Topology
 
-Dynamic sync uses **Socket.IO** to orchestrate events across specialized rooms:
+Real-time state synchronization is managed via **Socket.IO**:
 
 ```
                   ┌────────────────────────┐
-                  │   Socket.IO Server     │
+                  │    Socket.IO Server    │
                   └───────────┬────────────┘
                               │
              ┌────────────────┴────────────────┐
              ▼                                 ▼
    ┌──────────────────┐               ┌──────────────────┐
-   │ Broadcast Channel│               │ Private Rooms    │
-   │  (To all users)  │               │ ('user-{nim}')   │
+   │ Broadcast Room   │               │ Private Rooms    │
+   │  (Public Feed)   │               │ ('user-{nim}')   │
    └─────────┬────────┘               └────────┬─────────┘
              │                                 │
    ┌─────────┼─────────┐             ┌─────────┼─────────┐
@@ -154,24 +151,24 @@ online-   new-      offer-        new-      enrollment-  auth-
 count     offer     taken         notif     updated      error
 ```
 
-* **Broadcast Channel**: Emits general marketplace changes. If any user places an offer, completes a trade, or disconnects, the changes reflect instantly across all student screens without page refreshes.
-* **Private Rooms**: Restricts sensitive alerts (such as administrative schedule overrides or barter match notifications) strictly to the targeted student's browser context.
+* **Broadcast Room**: Pushes real-time class feed alterations to all active browsers immediately.
+* **Private Rooms**: Handles target-specific messages (e.g., transaction results or administrative schedule changes) strictly to the authenticated student's session.
 
 ---
 
-## 📁 5. High-Load Simulation Flow
+## 5. Load Simulator Topology
 
-When you run `npm run simulate` in the backend repository, the codebase executes the following telemetry pipeline:
+The simulation engine (`simulator.js`) mimics concurrent actions using configured behaviors:
 
 ```
-[ orchestrator.js ]
+[ orchestrator ]
        │
-       ├─► 1. Load Seeding Config & Calculate valid swap paths
-       ├─► 2. Initialize Telemetry metrics collectors
-       ├─► 3. Spin up concurrent virtual users (Ramping up over 20s)
+       ├─► 1. Query current valid barter pairs
+       ├─► 2. Initialize Telemetry log
+       ├─► 3. Spin up concurrent virtual users (Ramp up)
        │
        ▼
- [ Virtual User Personas ]
+ [ User Personas ]
        │
        ├─► Aggressive (15%) ────► Think: 200-1000ms   ──► Action: Accept Offers (85%)
        ├─► Moderate (40%)   ────► Think: 500-2500ms   ──► Action: Accept / Browse (65%)
@@ -181,19 +178,15 @@ When you run `npm run simulate` in the backend repository, the codebase executes
        ▼
   [ API /take Endpoint ]
        │
-       ├─► If multiple users claim the same offer inside a 100ms window...
-       └─► PostgreSQL handles transactional row locking. Only 1 succeeds, others receive 400.
+       ├─► Staggered concurrent HTTP POST requests within 100ms
+       └─► Atomic DB transaction locks row; 1st succeeds, others return 400
        │
        ▼
-[ Telemetry Report Outputs ]
+[ Telemetry Analytics ]
        │
-       ├─► Calculates Avg Response Times & Throughput Rates
-       └─► Renders p95 and p99 latency percentiles
+       ├─► Calculate Avg Response Times & Throughput
+       └─► Calculate p95 and p99 latency percentiles
 ```
-
----
-
-*This architecture is optimized for concurrency, high performance, and robustness. Use this document as a guide when modifying code blocks.*
 
 ---
 
