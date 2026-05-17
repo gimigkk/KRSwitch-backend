@@ -11,6 +11,7 @@ model User {
   name           String
   email          String         @unique
   role           String         @default("student")
+  isActive       Boolean        @default(true)
   offeredBarters BarterOffer[]  @relation("Offerer")
   takenBarters   BarterOffer[]  @relation("Taker")
   enrollments    Enrollment[]
@@ -83,6 +84,6 @@ model ActivityLog {
   action_type String
   user_nim    String
   details     String
-  
+
   @@map("activity_logs")
 }
