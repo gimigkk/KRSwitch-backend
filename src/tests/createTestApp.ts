@@ -6,6 +6,7 @@ import { mockIo } from './mocks/io';
 // sebelum route module resolve prisma singleton-nya
 export async function createTestApp() {
   const { default: adminRouter }  = await import('../routes/admin');
+  const { default: adminApiRouter } = await import('../routes/adminRoutes');
   const { createOffersRouter }    = await import('../routes/offers');
 
   const app = express();
@@ -13,6 +14,7 @@ export async function createTestApp() {
   app.use(cookieParser());
 
   app.use('/', adminRouter);
+  app.use('/api/admin', adminApiRouter(mockIo as any));
   app.use('/api/offers', createOffersRouter(mockIo as any));
 
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

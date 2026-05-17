@@ -4,24 +4,84 @@ import { Readable } from 'stream';
 import csvParser from 'csv-parser';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import { z } from 'zod';
 import { Server } from 'socket.io';
 import { requireAuth } from '../middleware/authMiddleware';
-import { asyncHandler } from '../middleware/helpers';
+import { asyncHandler, validate } from '../middleware/helpers';
 import { prisma } from '../prisma/db';
 import { getOnlineCount } from '../socket/socketHandler';
 import { randomizeEnrollments } from '../utils/seeding';
 
+// ─── Zod Validation Schemas ──────────────────────────────────────────────────
+const createUserSchema = z.object({
+  nim:   z.string().min(1).max(30),
+  name:  z.string().min(1).max(100),
+  email: z.string().email(),
+});
+
+const createAdminSchema = z.object({
+  name:  z.string().min(1).max(100),
+  email: z.string().email(),
+  role:  z.enum(['operator', 'super_admin']),
+});
+
+const updateAdminSchema = z.object({
+  role:     z.enum(['operator', 'super_admin']).optional(),
+  isActive: z.boolean().optional(),
+});
+
+const resetConfirmSchema = z.object({
+  confirm: z.literal('RESET_ALL_DATA'),
+});
+
+// Sanitize fields that could be interpreted as spreadsheet formulas (CSV Injection)
+function sanitizeCsv(value: string): string {
+  if (/^[=+\-@\t\r]/.test(value)) return `'${value}`;
+  return value;
+}
+
 export default (io: Server) => {
   const router = Router();
-  const upload = multer({ storage: multer.memoryStorage() });
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+    fileFilter: (_req: any, file: any, cb: any) => {
+      if (!file.originalname.toLowerCase().endsWith('.csv')) {
+        return cb(new Error('Only CSV files are allowed'));
+      }
+      cb(null, true);
+    },
+  });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function requireAdmin(req: any, res: any, next: any) {
+// CRIT-1 fix: removed ghost 'admin' role. MED-5 fix: check isActive on every protected request.
+const requireAdmin = asyncHandler(async (req: any, res: any, next: any) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden: admin only' });
+  if (req.user.role !== 'super_admin' && req.user.role !== 'operator') {
+    return res.status(403).json({ error: 'Forbidden: admin/operator only' });
+  }
+  const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
+  if (!dbUser || dbUser.isActive === false) {
+    res.clearCookie('token');
+    return res.status(401).json({ error: 'Account has been disabled' });
+  }
   next();
-}
+});
+
+const requireSuperAdmin = asyncHandler(async (req: any, res: any, next: any) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden: super admin only' });
+  }
+  const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
+  if (!dbUser || dbUser.isActive === false) {
+    res.clearCookie('token');
+    return res.status(401).json({ error: 'Account has been disabled' });
+  }
+  next();
+});
 
 const DAY_MAP: Record<string, string> = {
   '1': 'Senin',
@@ -114,11 +174,7 @@ router.post(
 
     if (rows.length === 0) return res.status(400).json({ error: 'CSV file is empty or invalid' });
 
-    console.log('Importing classes, rows found:', rows.length);
-    if (rows.length > 0) {
-      console.log('DEBUG RAW ROW 0:', JSON.stringify(rows[0]));
-      console.log('DEBUG KEYS:', Object.keys(rows[0]));
-    }
+
 
     const data = rows.map((row, idx) => {
       const getVal = (keys: string[]) => {
@@ -139,11 +195,8 @@ router.post(
         room: String(getVal(['room', 'ruang'])).trim(),
       };
 
-      if (idx === 0) console.log('DEBUG MAPPED ROW 0:', JSON.stringify(mapped));
       return mapped;
     }).filter(d => d.courseCode && d.classCode);
-
-    console.log('Valid classes to insert:', data.length);
 
     if (data.length === 0) {
       return res.status(400).json({ 
@@ -194,9 +247,6 @@ router.post(
         .on('end', resolve)
         .on('error', reject);
     });
-
-    console.log('Importing students, rows found:', rows.length);
-    if (rows.length > 0) console.log('First row keys:', Object.keys(rows[0]));
 
     const data = rows.map(row => {
       const getVal = (keys: string[]) => {
@@ -291,11 +341,12 @@ router.get('/template/:type', requireAuth, requireAdmin, (req: any, res: any) =>
   res.send(csv);
 });
 
-// POST /api/admin/reset
+// POST /api/admin/reset  — CRIT-2: requires superAdmin + server-side confirm token
 router.post(
   '/reset',
   requireAuth,
-  requireAdmin,
+  requireSuperAdmin,
+  validate(resetConfirmSchema),
   asyncHandler(async (req: any, res: any) => {
     await prisma.$transaction([
       prisma.notification.deleteMany({}),
@@ -345,10 +396,14 @@ router.delete(
   requireAdmin,
   asyncHandler(async (req: any, res: any) => {
     const { type } = req.params;
-    if (!['students', 'classes'].includes(type)) return res.status(400).json({ error: 'Invalid type' });
+    // HIGH-5 fix: use an explicit map — never derive filenames from user input
+    const FILE_MAP: Record<string, string> = {
+      students: 'master_students.csv',
+      classes:  'master_classes.csv',
+    };
+    if (!FILE_MAP[type]) return res.status(400).json({ error: 'Invalid type' });
 
-    const fileName = type === 'students' ? 'master_students.csv' : 'master_classes.csv';
-    const filePath = path.join(process.cwd(), 'storage', 'master', fileName);
+    const filePath = path.join(process.cwd(), 'storage', 'master', FILE_MAP[type]);
 
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
@@ -412,19 +467,20 @@ router.get('/export-recap', requireAuth, requireAdmin, asyncHandler(async (_req:
     orderBy: [{ user: { nim: 'asc' } }, { parallelClass: { courseCode: 'asc' } }],
   });
 
+  // MED-6 fix: sanitize fields to prevent CSV injection (formula chars prefixed with ')
   const header = 'NIM,Nama,Email,Kode Matkul,Nama Matkul,Kelas,Hari,Jam Mulai,Jam Selesai,Ruang\n';
   const rows = enrollments.map(e =>
     [
-      e.user.nim,
-      `"${e.user.name}"`,
-      e.user.email,
-      e.parallelClass.courseCode,
-      `"${e.parallelClass.courseName}"`,
-      e.parallelClass.classCode,
-      e.parallelClass.day,
-      e.parallelClass.timeStart,
-      e.parallelClass.timeEnd,
-      e.parallelClass.room,
+      sanitizeCsv(e.user.nim),
+      `"${sanitizeCsv(e.user.name)}"`,
+      sanitizeCsv(e.user.email),
+      sanitizeCsv(e.parallelClass.courseCode),
+      `"${sanitizeCsv(e.parallelClass.courseName)}"`,
+      sanitizeCsv(e.parallelClass.classCode),
+      sanitizeCsv(e.parallelClass.day),
+      sanitizeCsv(e.parallelClass.timeStart),
+      sanitizeCsv(e.parallelClass.timeEnd),
+      sanitizeCsv(e.parallelClass.room),
     ].join(',')
   );
 
@@ -496,7 +552,7 @@ router.get('/users/:nim', requireAuth, requireAdmin, asyncHandler(async (req: an
 }));
 
 // POST /api/admin/users
-router.post('/users', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+router.post('/users', requireAuth, requireAdmin, validate(createUserSchema), asyncHandler(async (req: any, res: any) => {
   const { nim, name, email } = req.body;
 
   if (!nim || !name || !email) {
@@ -727,6 +783,78 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
       nim2: { from: enroll2.parallelClass.classCode, to: enroll1.parallelClass.classCode },
     },
   });
+}));
+
+// ─── Super Admin Routes (Admin Management) ────────────────────────────────────
+
+router.get('/admins', requireAuth, requireSuperAdmin, asyncHandler(async (req: any, res: any) => {
+  const admins = await prisma.user.findMany({
+    where: { role: { in: ['operator', 'super_admin'] } },
+    select: { nim: true, name: true, email: true, role: true, isActive: true },
+    orderBy: { role: 'desc' }
+  });
+  res.json(admins);
+}));
+
+router.post('/admins', requireAuth, requireSuperAdmin, validate(createAdminSchema), asyncHandler(async (req: any, res: any) => {
+  const { name, email, role } = req.body;
+
+  // MED-4 fix: use cryptographically random NIM (not Math.random)
+  const nim = `ADM-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    return res.status(400).json({ error: 'User with this email already exists' });
+  }
+
+  const newAdmin = await prisma.user.create({
+    data: {
+      nim,
+      name,
+      email,
+      role, // operator or super_admin
+      isActive: true
+    }
+  });
+
+  await logActivity('ADMIN_CREATED', (req as any).user.nim, `Created ${role}: ${name} (${email})`);
+  io.emit('superadmin-user-created', newAdmin);
+  res.status(201).json(newAdmin);
+}));
+
+router.put('/admins/:nim', requireAuth, requireSuperAdmin, validate(updateAdminSchema), asyncHandler(async (req: any, res: any) => {
+  const { nim } = req.params;
+  const { role, isActive } = req.body;
+  
+  if ((req as any).user.nim === nim) {
+    return res.status(403).json({ error: 'Cannot modify your own admin account' });
+  }
+
+  const updated = await prisma.user.update({
+    where: { nim },
+    data: { ...(role !== undefined && { role }), ...(isActive !== undefined && { isActive }) }
+  });
+
+  await logActivity('ADMIN_MODIFIED', (req as any).user.nim, `Modified admin ${updated.name} (Role: ${role}, Active: ${isActive})`);
+  io.emit('superadmin-user-updated', updated);
+  res.json(updated);
+}));
+
+router.delete('/admins/:nim', requireAuth, requireSuperAdmin, asyncHandler(async (req: any, res: any) => {
+  const { nim } = req.params;
+  
+  if ((req as any).user.nim === nim) {
+    return res.status(403).json({ error: 'Cannot delete your own admin account' });
+  }
+
+  const admin = await prisma.user.findUnique({ where: { nim } });
+  if (!admin) return res.status(404).json({ error: 'Admin not found' });
+
+  await prisma.user.delete({ where: { nim } });
+
+  await logActivity('ADMIN_DELETED', (req as any).user.nim, `Deleted admin ${admin.name} (${admin.email})`);
+  io.emit('superadmin-user-deleted', { nim });
+  res.json({ message: 'Admin deleted successfully' });
 }));
 
   return router;

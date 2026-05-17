@@ -1,0 +1,345 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import request from 'supertest';
+import jwt from 'jsonwebtoken';
+import { prisma, buildTxMock } from '../mocks/db';
+import { mockIo, resetIoMocks } from '../mocks/io';
+
+vi.mock('../../prisma/db', () => ({ prisma }));
+
+import { createTestApp } from '../createTestApp';
+
+// --- Fixtures ---
+
+const JWT_SECRET = process.env.JWT_SECRET!;
+
+const studentUser   = { nim: 'M0001111111', name: 'Student',     email: 'student@apps.ipb.ac.id',  role: 'student'     };
+const operatorUser  = { nim: 'ADMIN01',     name: 'Operator',    email: 'operator@apps.ipb.ac.id', role: 'operator'    };
+const superAdminUser = { nim: 'SUPER01',    name: 'Super Admin', email: 'super@apps.ipb.ac.id',    role: 'super_admin' };
+
+function authCookie(user: any) {
+  const token = jwt.sign(user, JWT_SECRET);
+  return `token=${token}`;
+}
+
+// Helper: make requireAdmin / requireSuperAdmin isActive check pass
+function mockActiveUser(user = operatorUser) {
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({ ...user, isActive: true } as any);
+}
+
+// --- Setup ---
+
+let app: any;
+
+beforeEach(async () => {
+  Object.values(prisma).forEach(model => {
+    if (model && typeof model === 'object') {
+      Object.values(model).forEach(fn => { if (vi.isMockFunction(fn)) fn.mockReset(); });
+    }
+  });
+  resetIoMocks();
+  app = await createTestApp();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+// ─── RBAC Middleware ──────────────────────────────────────────────────────────
+describe('Admin RBAC Middleware Protection', () => {
+  it('rejects students from accessing admin routes', async () => {
+    const res = await request(app)
+      .get('/api/admin/stats')
+      .set('Cookie', authCookie(studentUser));
+    
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Forbidden: admin\/operator only/i);
+  });
+
+  it('rejects unauthenticated users from accessing admin routes', async () => {
+    const res = await request(app).get('/api/admin/stats');
+    expect(res.status).toBe(401);
+  });
+
+  it('allows operators to access regular admin routes', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.user.count).mockResolvedValue(0);
+    vi.mocked(prisma.barterOffer.count).mockResolvedValue(0);
+
+    const res = await request(app)
+      .get('/api/admin/stats')
+      .set('Cookie', authCookie(operatorUser));
+    
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects operators from accessing super admin routes', async () => {
+    mockActiveUser(operatorUser);
+    const res = await request(app)
+      .get('/api/admin/admins')
+      .set('Cookie', authCookie(operatorUser));
+    
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Forbidden: super admin only/i);
+  });
+
+  it('allows super admins to access super admin routes', async () => {
+    mockActiveUser(superAdminUser);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+
+    const res = await request(app)
+      .get('/api/admin/admins')
+      .set('Cookie', authCookie(superAdminUser));
+    
+    expect(res.status).toBe(200);
+  });
+
+  // CRIT-1: ghost 'admin' role must NOT be accepted
+  it('CRIT-1: rejects ghost admin role from operator routes', async () => {
+    const ghostUser = { nim: 'GHOST01', name: 'Ghost', email: 'ghost@ipb.ac.id', role: 'admin' };
+    const res = await request(app)
+      .get('/api/admin/stats')
+      .set('Cookie', authCookie(ghostUser));
+    
+    expect(res.status).toBe(403);
+  });
+
+  it('CRIT-1: rejects ghost admin role from super admin routes', async () => {
+    const ghostUser = { nim: 'GHOST01', name: 'Ghost', email: 'ghost@ipb.ac.id', role: 'admin' };
+    const res = await request(app)
+      .get('/api/admin/admins')
+      .set('Cookie', authCookie(ghostUser));
+    
+    expect(res.status).toBe(403);
+  });
+
+  // MED-5: deactivated accounts must be rejected
+  it('MED-5: returns 401 for a deactivated operator account', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ ...operatorUser, isActive: false } as any);
+
+    const res = await request(app)
+      .get('/api/admin/stats')
+      .set('Cookie', authCookie(operatorUser));
+    
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/Account has been disabled/i);
+  });
+
+  it('MED-5: returns 401 for a deactivated super admin account', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ ...superAdminUser, isActive: false } as any);
+
+    const res = await request(app)
+      .get('/api/admin/admins')
+      .set('Cookie', authCookie(superAdminUser));
+    
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/Account has been disabled/i);
+  });
+});
+
+// ─── Dashboard & Analytics ────────────────────────────────────────────────────
+describe('Dashboard & Analytics', () => {
+  it('GET /api/admin/stats returns aggregated stats', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.parallelClass.count).mockResolvedValue(10);
+    vi.mocked(prisma.barterOffer.count).mockImplementation((args: any) => 
+      args.where?.status === 'open' ? Promise.resolve(5) : Promise.resolve(20)
+    );
+    vi.mocked(prisma.user.count).mockResolvedValue(100);
+
+    const res = await request(app).get('/api/admin/stats').set('Cookie', authCookie(operatorUser));
+    expect(res.status).toBe(200);
+    expect(res.body.totalClasses).toBe(10);
+    expect(res.body.activeOffers).toBe(5);
+    expect(res.body.totalStudents).toBe(100);
+  });
+
+  it('GET /api/admin/logs returns audit logs', async () => {
+    mockActiveUser(operatorUser);
+    const logs = [{ id: 1, action_type: 'login' }];
+    vi.mocked(prisma.activityLog.findMany).mockResolvedValue(logs as any);
+    
+    const res = await request(app).get('/api/admin/logs').set('Cookie', authCookie(operatorUser));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(logs);
+  });
+});
+
+// ─── Master Data Management ───────────────────────────────────────────────────
+describe('Master Data Management', () => {
+  it('GET /api/admin/users returns user list with enrollments', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([{ nim: 'M123', role: 'student', enrollments: [], offeredBarters: [] }] as any);
+    const res = await request(app).get('/api/admin/users').set('Cookie', authCookie(operatorUser));
+    expect(res.status).toBe(200);
+    expect(res.body[0].nim).toBe('M123');
+  });
+
+  it('DELETE /api/admin/users/:nim deletes user and emits event', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // for requireAdmin
+      .mockResolvedValueOnce({ nim: 'M123', name: 'Test' } as any);        // for user existence check
+    
+    const res = await request(app).delete('/api/admin/users/M123').set('Cookie', authCookie(operatorUser));
+    expect(res.status).toBe(200);
+    expect(prisma.user.delete).toHaveBeenCalledWith({ where: { nim: 'M123' } });
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-user-deleted', { nim: 'M123' });
+  });
+
+  // HIGH-4: Zod validation on POST /users
+  it('HIGH-4: POST /api/admin/users rejects invalid email', async () => {
+    mockActiveUser(operatorUser);
+    const res = await request(app)
+      .post('/api/admin/users')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ nim: 'M123', name: 'Test', email: 'not-an-email' });
+    
+    expect(res.status).toBe(400);
+    expect(res.body.details[0].field).toBe('email');
+  });
+
+  it('HIGH-4: POST /api/admin/users rejects missing name', async () => {
+    mockActiveUser(operatorUser);
+    const res = await request(app)
+      .post('/api/admin/users')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ nim: 'M123', email: 'test@ipb.ac.id' });
+    
+    expect(res.status).toBe(400);
+  });
+});
+
+// ─── Administrative Operations ────────────────────────────────────────────────
+describe('Administrative Operations', () => {
+  it('DELETE /api/admin/purge-offers purges open offers and emits socket event', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.barterOffer.deleteMany).mockResolvedValue({ count: 5 } as any);
+    
+    const res = await request(app).delete('/api/admin/purge-offers').set('Cookie', authCookie(operatorUser));
+    expect(res.status).toBe(200);
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-offers-purged', { count: 5 });
+  });
+
+  it('POST /api/admin/override-swap completes manual swap', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.enrollment.findFirst)
+      .mockResolvedValueOnce({ id: 1, parallelClassId: 10, parallelClass: { classCode: 'K01' } } as any)
+      .mockResolvedValueOnce({ id: 2, parallelClassId: 20, parallelClass: { classCode: 'K02' } } as any);
+    vi.mocked(prisma.$transaction).mockResolvedValue([{}, {}]);
+    vi.mocked(prisma.barterOffer.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.barterOffer.updateMany).mockResolvedValue({} as any);
+
+    const res = await request(app)
+      .post('/api/admin/override-swap')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ nim1: 'A', nim2: 'B', courseCode: 'CS101' });
+    
+    expect(res.status).toBe(200);
+    expect(mockIo.emit).toHaveBeenCalledWith('enrollments-swapped', expect.any(Object));
+  });
+
+  // CRIT-2: System reset security
+  it('CRIT-2: POST /api/admin/reset returns 403 for operator (requires superAdmin)', async () => {
+    mockActiveUser(operatorUser);
+    const res = await request(app)
+      .post('/api/admin/reset')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ confirm: 'RESET_ALL_DATA' });
+    
+    expect(res.status).toBe(403);
+  });
+
+  it('CRIT-2: POST /api/admin/reset returns 400 without confirm token', async () => {
+    mockActiveUser(superAdminUser);
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValue({ ...superAdminUser, isActive: true } as any);
+
+    const res = await request(app)
+      .post('/api/admin/reset')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({}); // Missing confirm field
+    
+    expect(res.status).toBe(400);
+  });
+
+  it('CRIT-2: POST /api/admin/reset returns 400 with wrong confirm string', async () => {
+    mockActiveUser(superAdminUser);
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValue({ ...superAdminUser, isActive: true } as any);
+
+    const res = await request(app)
+      .post('/api/admin/reset')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ confirm: 'yes please delete everything' }); // Wrong value
+    
+    expect(res.status).toBe(400);
+  });
+
+  it('CRIT-2: POST /api/admin/reset succeeds for superAdmin with correct confirm token', async () => {
+    // requireSuperAdmin calls findUnique for isActive, then reset runs $transaction
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValue({ ...superAdminUser, isActive: true } as any);
+    vi.mocked(prisma.$transaction).mockResolvedValue([]);
+
+    const res = await request(app)
+      .post('/api/admin/reset')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ confirm: 'RESET_ALL_DATA' });
+    
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── Super Admin Operations ───────────────────────────────────────────────────
+describe('Super Admin Operations', () => {
+  it('POST /api/admin/admins creates a new admin', async () => {
+    mockActiveUser(superAdminUser);
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...superAdminUser, isActive: true } as any) // isActive check
+      .mockResolvedValueOnce(null);                                          // email uniqueness
+    vi.mocked(prisma.user.create).mockResolvedValue({ nim: 'ADM-NEW', role: 'operator' } as any);
+
+    const res = await request(app)
+      .post('/api/admin/admins')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ name: 'New Op', email: 'newop@admin.com', role: 'operator' });
+    
+    expect(res.status).toBe(201);
+    // MED-4: NIM should be ADM- prefix with hex (not base36 Math.random)
+    expect(res.body.nim).toMatch(/^ADM-/);
+  });
+
+  // HIGH-4: role validation on /admins
+  it('HIGH-4: POST /api/admin/admins rejects invalid role', async () => {
+    mockActiveUser(superAdminUser);
+    const res = await request(app)
+      .post('/api/admin/admins')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ name: 'Bad', email: 'bad@admin.com', role: 'student' }); // Invalid role
+    
+    expect(res.status).toBe(400);
+  });
+
+  it('HIGH-4: PUT /api/admin/admins/:nim rejects invalid role', async () => {
+    mockActiveUser(superAdminUser);
+    const res = await request(app)
+      .put('/api/admin/admins/TARGETADM')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ role: 'god_mode' }); // Invalid role
+    
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /api/admin/admins/:nim updates role for valid superAdmin request', async () => {
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValue({ ...superAdminUser, isActive: true } as any);
+    vi.mocked(prisma.user.update).mockResolvedValue({ nim: 'TARGET01', role: 'super_admin', isActive: true } as any);
+
+    const res = await request(app)
+      .put('/api/admin/admins/TARGET01')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ role: 'super_admin' });
+    
+    expect(res.status).toBe(200);
+  });
+});

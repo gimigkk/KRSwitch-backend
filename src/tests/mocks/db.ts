@@ -8,6 +8,7 @@ const buildModelMock = () => ({
   update:     vi.fn(),
   updateMany: vi.fn(),
   delete:     vi.fn(),
+  deleteMany: vi.fn(),
   count:      vi.fn(),
 });
 
@@ -17,6 +18,7 @@ export const prisma = {
   user:          buildModelMock(),
   parallelClass: buildModelMock(),
   notification:  buildModelMock(),
+  activityLog:   buildModelMock(),
   $transaction:  vi.fn(),
   $disconnect:   vi.fn(),
   $connect:      vi.fn(),
@@ -28,6 +30,7 @@ export const buildTxMock = () => ({
   user:          buildModelMock(),
   parallelClass: buildModelMock(),
   notification:  buildModelMock(),
+  activityLog:   buildModelMock(),
 });
 
 export type TxMock = ReturnType<typeof buildTxMock>;

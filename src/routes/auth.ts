@@ -95,14 +95,16 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const googlePayload = ticket.getPayload();
     if (!googlePayload?.email) return redirectWithError(res, 'oauth_failed');
 
-    console.log(`[auth] login attempt: ${googlePayload.email}`);
+    const logId = crypto.createHash('sha256').update(googlePayload.email).digest('hex').slice(0, 8);
+    console.log(`[auth] login attempt from user:${logId}`);
 
     const user = await prisma.user.findUnique({
       where: { email: googlePayload.email },
-      select: { nim: true, name: true, email: true, role: true },
+      select: { nim: true, name: true, email: true, role: true, isActive: true },
     });
 
     if (!user) return redirectWithError(res, 'not_registered');
+    if (user.isActive === false) return redirectWithError(res, 'account_disabled');
 
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });

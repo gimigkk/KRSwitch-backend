@@ -15,8 +15,8 @@ const JWT_SECRET  = process.env.JWT_SECRET!;
 const OFFERER_NIM = 'M0001111111';
 const TAKER_NIM   = 'M0002222222';
 
-const offererUser = { nim: OFFERER_NIM, name: 'Offerer', email: 'offerer@apps.ipb.ac.id' };
-const takerUser   = { nim: TAKER_NIM,   name: 'Taker',   email: 'taker@apps.ipb.ac.id' };
+const offererUser = { nim: OFFERER_NIM, name: 'Offerer', email: 'offerer@apps.ipb.ac.id', role: 'student' };
+const takerUser   = { nim: TAKER_NIM,   name: 'Taker',   email: 'taker@apps.ipb.ac.id', role: 'student' };
 
 const classA = { id: 10, courseCode: 'CS101', classCode: 'K01', day: 'Monday',  timeStart: '08:00', timeEnd: '10:00' };
 const classB = { id: 20, courseCode: 'CS101', classCode: 'K02', day: 'Tuesday', timeStart: '10:00', timeEnd: '12:00' };
