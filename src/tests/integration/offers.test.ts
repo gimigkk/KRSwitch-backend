@@ -38,6 +38,8 @@ beforeEach(async () => {
   });
   resetIoMocks();
 
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: true } as any);
+
   // Default $transaction: autoMatch nggak nemu counter-offer, langsung return matched: false
   vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
     const tx = buildTxMock();

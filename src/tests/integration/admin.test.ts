@@ -28,6 +28,8 @@ beforeEach(async () => {
     }
   });
 
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: true } as any);
+
   app = await createTestApp();
 });
 

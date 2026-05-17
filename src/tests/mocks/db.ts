@@ -24,13 +24,20 @@ export const prisma = {
   $connect:      vi.fn(),
 };
 
-export const buildTxMock = () => ({
-  barterOffer:   buildModelMock(),
-  enrollment:    buildModelMock(),
-  user:          buildModelMock(),
-  parallelClass: buildModelMock(),
-  notification:  buildModelMock(),
-  activityLog:   buildModelMock(),
-});
+// Set a default resolved value so that requireAuth active session check passes by default across all integration tests
+prisma.user.findUnique.mockResolvedValue({ isActive: true });
+
+export const buildTxMock = () => {
+  const txUser = buildModelMock();
+  txUser.findUnique.mockResolvedValue({ isActive: true }); // also inside transactions
+  return {
+    barterOffer:   buildModelMock(),
+    enrollment:    buildModelMock(),
+    user:          txUser,
+    parallelClass: buildModelMock(),
+    notification:  buildModelMock(),
+    activityLog:   buildModelMock(),
+  };
+};
 
 export type TxMock = ReturnType<typeof buildTxMock>;

@@ -1,11 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { requireAuth } from '../../middleware/authMiddleware';
 import { validate, asyncHandler } from '../../middleware/helpers';
 import { z } from 'zod';
+import { prisma } from '../../prisma/db';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
+
+// Mock Prisma client
+vi.mock('../../prisma/db', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
 
 // --- Helpers ---
 
@@ -26,19 +36,23 @@ function makeNext(): NextFunction {
 // Middleware yang cek JWT dari cookie, lalu taruh payload di req.user
 
 describe('requireAuth', () => {
-  it('returns 401 when no token cookie is present', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 401 when no token cookie is present', async () => {
     const req  = { headers: {} } as Request;
     const res  = makeRes();
     const next = makeNext();
 
-    requireAuth(req, res, next);
+    await requireAuth(req, res, next);
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'Not authenticated' });
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('returns 401 and clears cookie when token is invalid / expired (production domain)', () => {
+  it('returns 401 and clears cookie when token is invalid / expired (production domain)', async () => {
     const originalDomain = process.env.COOKIE_DOMAIN;
     process.env.COOKIE_DOMAIN = 'production.com';
     
@@ -46,12 +60,18 @@ describe('requireAuth', () => {
     const res  = makeRes();
     const next = makeNext();
 
-    requireAuth(req, res, next);
+    await requireAuth(req, res, next);
 
-    expect(res.clearCookie).toHaveBeenCalledTimes(3);
+    // clearAllAuthCookies clears 6 combinations:
+    // host-only, localhost, .localhost, 127.0.0.1, production.com, .production.com
+    expect(res.clearCookie).toHaveBeenCalledTimes(6);
     expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
     expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'localhost' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { domain: 'production.com' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { domain: '.localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(4, 'token', { domain: '127.0.0.1' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(5, 'token', { domain: 'production.com' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(6, 'token', { domain: '.production.com' });
+    
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'Session expired, please log in again' });
     expect(next).not.toHaveBeenCalled();
@@ -59,7 +79,7 @@ describe('requireAuth', () => {
     process.env.COOKIE_DOMAIN = originalDomain;
   });
 
-  it('returns 401 and clears ONLY host cookie when token is invalid / expired (localhost)', () => {
+  it('returns 401 and clears only local host cookies when token is invalid / expired (localhost)', async () => {
     const originalDomain = process.env.COOKIE_DOMAIN;
     process.env.COOKIE_DOMAIN = 'localhost';
     
@@ -67,49 +87,104 @@ describe('requireAuth', () => {
     const res  = makeRes();
     const next = makeNext();
 
-    requireAuth(req, res, next);
+    await requireAuth(req, res, next);
 
-    expect(res.clearCookie).toHaveBeenCalledTimes(2);
+    // COOKIE_DOMAIN=localhost: clears 4 combinations: host-only, localhost, .localhost, 127.0.0.1
+    expect(res.clearCookie).toHaveBeenCalledTimes(4);
     expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
     expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { domain: '.localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(4, 'token', { domain: '127.0.0.1' });
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
     
     process.env.COOKIE_DOMAIN = originalDomain;
   });
 
-  it('returns 401 for a structurally valid JWT signed with the wrong secret', () => {
+  it('returns 401 for a structurally valid JWT signed with the wrong secret', async () => {
     const token = jwt.sign({ nim: 'M0001234567', name: 'X', email: 'x@y.com' }, 'WRONG_SECRET');
     const req   = { headers: { cookie: `token=${token}` } } as unknown as Request;
     const res   = makeRes();
     const next  = makeNext();
 
-    requireAuth(req, res, next);
+    await requireAuth(req, res, next);
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('populates req.user and calls next() for a valid token', () => {
+  it('populates req.user and calls next() for a valid active token', async () => {
+    // Mock user being active in DB
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: true } as any);
+
     const payload = { nim: 'M0001234567', name: 'Test User', email: 'test@apps.ipb.ac.id' };
     const token   = jwt.sign(payload, JWT_SECRET);
     const req     = { headers: { cookie: `token=${token}` } } as unknown as Request;
     const res     = makeRes();
     const next    = makeNext();
 
-    requireAuth(req, res, next);
+    await requireAuth(req, res, next);
 
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { email: payload.email },
+      select: { isActive: true },
+    });
     expect(next).toHaveBeenCalledOnce();
     expect((req as any).user).toMatchObject(payload);
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it('bypasses zombie duplicate cookies and authenticates if at least one valid token is present', () => {
+  it('returns 401 and clears cookies for a valid token if user is inactive in DB', async () => {
+    // Mock user being inactive in DB
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: false } as any);
+
+    const payload = { nim: 'M0001234567', name: 'Test User', email: 'test@apps.ipb.ac.id' };
+    const token   = jwt.sign(payload, JWT_SECRET);
+    const req     = { headers: { cookie: `token=${token}` } } as unknown as Request;
+    const res     = makeRes();
+    const next    = makeNext();
+
+    await requireAuth(req, res, next);
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { email: payload.email },
+      select: { isActive: true },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.clearCookie).toHaveBeenCalled();
+  });
+
+  it('returns 401 and clears cookies for a valid token if user does not exist in DB', async () => {
+    // Mock user not found in DB
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+    const payload = { nim: 'M0001234567', name: 'Test User', email: 'test@apps.ipb.ac.id' };
+    const token   = jwt.sign(payload, JWT_SECRET);
+    const req     = { headers: { cookie: `token=${token}` } } as unknown as Request;
+    const res     = makeRes();
+    const next    = makeNext();
+
+    await requireAuth(req, res, next);
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { email: payload.email },
+      select: { isActive: true },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.clearCookie).toHaveBeenCalled();
+  });
+
+  it('bypasses zombie duplicate cookies and authenticates if at least one valid active token is present', async () => {
+    // Mock user being active in DB
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: true } as any);
+
     const payload = { nim: 'M0001234567', name: 'Test User', email: 'test@apps.ipb.ac.id' };
     const validToken = jwt.sign(payload, JWT_SECRET);
     const invalidToken = 'definitely.not.valid.token';
 
-    // Simulate sending multiple token cookies (e.g. cookie-parser would normally fail)
+    // Simulate sending multiple token cookies
     const req = { 
       headers: { 
         cookie: `token=${invalidToken}; token=${validToken}` 
@@ -118,7 +193,7 @@ describe('requireAuth', () => {
     const res = makeRes();
     const next = makeNext();
 
-    requireAuth(req, res, next);
+    await requireAuth(req, res, next);
 
     expect(next).toHaveBeenCalledOnce();
     expect((req as any).user).toMatchObject(payload);

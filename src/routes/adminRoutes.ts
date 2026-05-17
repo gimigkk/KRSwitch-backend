@@ -7,7 +7,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { Server } from 'socket.io';
-import { requireAuth } from '../middleware/authMiddleware';
+import { requireAuth, clearAllAuthCookies } from '../middleware/authMiddleware';
 import { asyncHandler, validate } from '../middleware/helpers';
 import { logActivity } from '../utils/activity';
 import { prisma } from '../prisma/db';
@@ -64,15 +64,6 @@ const requireAdmin = asyncHandler(async (req: any, res: any, next: any) => {
   if (req.user.role !== 'super_admin' && req.user.role !== 'operator') {
     return res.status(403).json({ error: 'Forbidden: admin/operator only' });
   }
-  const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
-  if (!dbUser || dbUser.isActive === false) {
-    res.clearCookie('token'); // Clear potential zombie host-only cookie
-    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
-    if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
-      res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
-    }
-    return res.status(401).json({ error: 'Account has been disabled' });
-  }
   next();
 });
 
@@ -80,15 +71,6 @@ const requireSuperAdmin = asyncHandler(async (req: any, res: any, next: any) => 
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   if (req.user.role !== 'super_admin') {
     return res.status(403).json({ error: 'Forbidden: super admin only' });
-  }
-  const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
-  if (!dbUser || dbUser.isActive === false) {
-    res.clearCookie('token'); // Clear potential zombie host-only cookie
-    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
-    if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
-      res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
-    }
-    return res.status(401).json({ error: 'Account has been disabled' });
   }
   next();
 });

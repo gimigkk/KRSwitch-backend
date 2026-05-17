@@ -4,6 +4,7 @@ import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { prisma } from '../prisma/db';
+import { clearAllAuthCookies } from '../middleware/authMiddleware';
 
 const router = Router();
 
@@ -40,6 +41,7 @@ const client = new OAuth2Client({
 
 // semua error diarahkan ke halaman callback di popup, AuthCallback.jsx yang handle
 function redirectWithError(res: Response, error: string, frontendUrl?: string): void {
+  clearAllAuthCookies(res);
   const target = frontendUrl || FRONTEND_URL;
   res.redirect(`${target}/auth/callback?error=${error}`);
 }
@@ -143,14 +145,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 });
 
 router.post('/logout', (_req: Request, res: Response) => {
-  res.clearCookie('token'); // Kill potential zombie host-only cookie
-  res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill old ghost explicit-domain cookie
-  res.clearCookie('token', {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    ...(process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost' ? { domain: process.env.COOKIE_DOMAIN } : {})
-  });
+  clearAllAuthCookies(res);
   res.json({ message: 'Logged out' });
 });
 

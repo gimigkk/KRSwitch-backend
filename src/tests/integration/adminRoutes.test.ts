@@ -40,6 +40,9 @@ beforeEach(async () => {
     }
   });
   resetIoMocks();
+
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: true } as any);
+
   app = await createTestApp();
 });
 

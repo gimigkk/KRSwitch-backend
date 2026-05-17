@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { prisma } from '../prisma/db';
 
 export interface AuthUser {
   nim: string;
@@ -17,14 +18,24 @@ declare global {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+/**
+ * Aggressively clear all possible auth cookie scopes to prevent zombie/duplicate cookie lockouts
+ */
+export function clearAllAuthCookies(res: Response): void {
+  res.clearCookie('token');
+  res.clearCookie('token', { domain: 'localhost' });
+  res.clearCookie('token', { domain: '.localhost' });
+  res.clearCookie('token', { domain: '127.0.0.1' });
+  if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
+    res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
+    res.clearCookie('token', { domain: '.' + process.env.COOKIE_DOMAIN });
+  }
+}
+
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const cookieHeader = req.headers?.cookie;
   if (!cookieHeader) {
-    res.clearCookie('token'); // Clear potential zombie host-only cookie
-    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
-    if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
-      res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
-    }
+    clearAllAuthCookies(res);
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
@@ -36,30 +47,39 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     .map(c => c.substring(6));
 
   if (tokens.length === 0) {
-    res.clearCookie('token'); // Clear potential zombie host-only cookie
-    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
-    if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
-      res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
-    }
+    clearAllAuthCookies(res);
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  // Try verifying all provided tokens until we find a valid one
+  // Try verifying all provided tokens until we find a valid and active one
   for (const token of tokens) {
     try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
-      return next(); // Found a valid token, proceed
+      const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
+      
+      // Fast active session lookup inside database
+      const dbUser = await prisma.user.findUnique({
+        where: { email: payload.email },
+        select: { isActive: true }
+      });
+      
+      if (dbUser && dbUser.isActive === false) {
+        clearAllAuthCookies(res);
+        return res.status(401).json({ error: 'Account has been disabled' });
+      }
+
+      if (!dbUser) {
+        continue; // User is deleted, try the next token (if any)
+      }
+
+      req.user = payload;
+      return next(); // Found a valid, active token, proceed
     } catch {
       continue; // This token is invalid/expired (a zombie), try the next one
     }
   }
 
-  // If we exhaust all tokens and none are valid, clear them and return 401
-  res.clearCookie('token'); // Clear potential zombie host-only cookie
-  res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
-  if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
-    res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
-  }
+  // If we exhaust all tokens and none are valid or active, clear them and return 401
+  clearAllAuthCookies(res);
   return res.status(401).json({ error: 'Session expired, please log in again' });
 }
 
