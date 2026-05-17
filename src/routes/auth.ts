@@ -26,6 +26,7 @@ interface JwtPayload {
   name: string;
   email: string;
   role: string;
+  picture?: string;
 }
 
 // --- Setup -------------------------------------------
@@ -106,7 +107,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     if (!user) return redirectWithError(res, 'not_registered');
     if (user.isActive === false) return redirectWithError(res, 'account_disabled');
 
-    const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role };
+    const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role, picture: googlePayload.picture };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
     res.clearCookie('token'); // Kill potential zombie host-only cookie before assigning new valid one
