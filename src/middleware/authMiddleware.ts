@@ -19,7 +19,8 @@ declare global {
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.token;
   if (!token) {
-    res.clearCookie('token'); // Clear potential zombie cookie
+    res.clearCookie('token'); // Clear potential zombie host-only cookie
+    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
     if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
       res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
     }
@@ -30,7 +31,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     req.user = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
     next();
   } catch {
-    res.clearCookie('token'); // Clear potential zombie cookie
+    res.clearCookie('token'); // Clear potential zombie host-only cookie
+    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
     if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
       res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
     }

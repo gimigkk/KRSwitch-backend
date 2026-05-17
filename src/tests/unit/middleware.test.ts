@@ -48,9 +48,10 @@ describe('requireAuth', () => {
 
     requireAuth(req, res, next);
 
-    expect(res.clearCookie).toHaveBeenCalledTimes(2);
+    expect(res.clearCookie).toHaveBeenCalledTimes(3);
     expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
-    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'production.com' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { domain: 'production.com' });
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'Session expired, please log in again' });
     expect(next).not.toHaveBeenCalled();
@@ -68,8 +69,9 @@ describe('requireAuth', () => {
 
     requireAuth(req, res, next);
 
-    expect(res.clearCookie).toHaveBeenCalledTimes(1);
-    expect(res.clearCookie).toHaveBeenCalledWith('token');
+    expect(res.clearCookie).toHaveBeenCalledTimes(2);
+    expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
+    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'localhost' });
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
     

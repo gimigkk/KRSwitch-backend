@@ -109,7 +109,8 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
-    res.clearCookie('token'); // Kill potential zombie cookie before assigning new valid one
+    res.clearCookie('token'); // Kill potential zombie host-only cookie before assigning new valid one
+    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill old ghost explicit-domain cookie
     res.cookie('token', sessionToken, {
       httpOnly: true,
       sameSite: 'lax',
@@ -127,7 +128,8 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 });
 
 router.post('/logout', (_req: Request, res: Response) => {
-  res.clearCookie('token'); // Kill potential zombie cookie
+  res.clearCookie('token'); // Kill potential zombie host-only cookie
+  res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill old ghost explicit-domain cookie
   res.clearCookie('token', {
     httpOnly: true,
     sameSite: 'lax',

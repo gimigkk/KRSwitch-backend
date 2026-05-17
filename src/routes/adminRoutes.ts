@@ -65,7 +65,8 @@ const requireAdmin = asyncHandler(async (req: any, res: any, next: any) => {
   }
   const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
   if (!dbUser || dbUser.isActive === false) {
-    res.clearCookie('token'); // Clear potential zombie cookie
+    res.clearCookie('token'); // Clear potential zombie host-only cookie
+    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
     if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
       res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
     }
@@ -81,7 +82,8 @@ const requireSuperAdmin = asyncHandler(async (req: any, res: any, next: any) => 
   }
   const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
   if (!dbUser || dbUser.isActive === false) {
-    res.clearCookie('token'); // Clear potential zombie cookie
+    res.clearCookie('token'); // Clear potential zombie host-only cookie
+    res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
     if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
       res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
     }
