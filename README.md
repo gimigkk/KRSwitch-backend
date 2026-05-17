@@ -12,11 +12,17 @@ The matchmaking logic runs inside a transactional context (`prisma.$transaction`
 * **Cascade Cancellation**: Upon a successful swap, all other open offers owned by the participants that conflict with their newly assigned schedules, or reference sections they no longer hold, are automatically marked as `cancelled` under reasons `no_longer_enrolled` or `schedule_conflict`.
 * **Race Condition Blocks**: When multiple HTTP POST requests attempt to `/take` the same offer at the same millisecond, database-level locking ensures only the first request succeeds while subsequent requests return a `400 Bad Request` with an explicit message.
 
+> [!IMPORTANT]
+> **Transaction Locks**: Matchmaking queries utilize PostgreSQL row-level locks within the transaction block. This guards critical database states against double-claim swaps when parallel clients select the same barter offer concurrently.
+
 ### 2. Session Management & Cookie Hardening
 To prevent persistent session issues across localhost and subdomain boundaries, the authentication pipeline uses the following strategies:
 * **Domain Purging**: Stale authenticated cookies are proactively cleared from both host-only, localhost subdomains, and configured remote origins during logout and invalid checks.
 * **Token Loop**: If the request headers contain duplicate or stale tokens, the verification middleware parses them in sequence until a valid, active session is identified.
 * **Status Checks**: Route guards check `isActive === true` inside the database, immediately revoking access from disabled user records regardless of token expiration.
+
+> [!WARNING]
+> **Cookie Scopes**: Ensure your `.env` config defines `COOKIE_DOMAIN` strictly to match your execution domain. Mismatched cookie domain configurations can lead to stale JWT parsing errors and session locks in browsers.
 
 ### 3. Atomic Database Operations
 Administrative CSV imports (`/import-students`, `/import-classes`) are atomic:

@@ -12,6 +12,9 @@ Verify **Node.js 20+** and **PostgreSQL 16** are active locally.
 2. In the `KRSwitch-backend` root, copy `.env` file details based on the [Backend README](file:///home/gimigkk/Desktop/Projects/KRSwitch/KRSwitch-backend/README.md).
 3. Ensure `DATABASE_URL` matches your local database settings.
 
+> [!IMPORTANT]
+> **PostgreSQL Configuration**: The matchmaking system relies heavily on atomic transactions. Ensure your PostgreSQL connection supports concurrent locking scopes and is not bottlenecked by client pool limits.
+
 ### 2. Run Backend Service
 Initialize dependencies, apply database migrations, and seed mock records:
 ```bash
@@ -30,6 +33,9 @@ npm install
 npm run dev           # Runs Vite dev server on http://localhost:5173
 ```
 Access the client at `http://localhost:5173`.
+
+> [!NOTE]
+> **Port Mappings**: By default, the React Vite client runs on port `5173` and maps backend calls to port `5000`. If you override these ports, ensure you update CORS origins in the backend `.env`.
 
 ### 4. Verify Tests
 ```bash
@@ -70,6 +76,9 @@ Complete these three tasks to understand the routing, validation, and rendering 
   2. Append rules requiring `myClassId` and `wantedClassId` to be positive, non-zero integers.
   3. Append a matching test case in `offerController.test.ts`.
 
+> [!TIP]
+> **Hot Module Reloading**: When completing exercises 2 and 3, backend modifications will automatically trigger server restarts via ts-node-dev. You do not need to manually boot the server between files updates.
+
 ---
 
 ## 📊 Code Dependency Graphs & Documentation Generators
@@ -87,7 +96,9 @@ npx madge --image backend-graph.svg --layout dot KRSwitch-backend/src/server.ts
 # Render frontend components to SVG:
 npx madge --image frontend-graph.svg --layout dot KRSwitch-frontend/src/main.jsx
 ```
-*Requires `graphviz` package installed globally on the OS (`sudo apt-get install graphviz`).*
+
+> [!TIP]
+> **Graphviz Requirement**: Generating graphical SVG files from Madge outputs requires the `graphviz` library installed globally on your operating system (e.g., `sudo apt-get install graphviz` on Ubuntu/Debian).
 
 ### 2. Prisma Database ERD (prisma-erd-generator)
 Generates dynamic ERD files during Prisma database generation:

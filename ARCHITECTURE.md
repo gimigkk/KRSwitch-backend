@@ -87,6 +87,9 @@ sequenceDiagram
     BE-->>FE: Return user context
 ```
 
+> [!NOTE]
+> **Ghost Cookie Handling**: If duplicate JWT session cookies exist across subdomains, the backend auth middleware iterates through all incoming token values sequentially until a valid signature is found, preventing arbitrary lockouts.
+
 ---
 
 ## 3. Atomic Barter Matchmaking Engine
@@ -127,6 +130,9 @@ flowchart TD
     EmitSuccess --> EndSuccess([End: Swap complete]):::startStop
 ```
 
+> [!IMPORTANT]
+> **Transactional Isolation**: The matchmaking phase queries and updates student registrations in an atomic database lock block. If schedule overlaps are caught or a counter-offer is concurrently claimed, the transaction rolls back cleanly with no partial modifications saved.
+
 ---
 
 ## 4. WebSocket Event Topology
@@ -153,6 +159,9 @@ count     offer     taken         notif     updated      error
 
 * **Broadcast Room**: Pushes real-time class feed alterations to all active browsers immediately.
 * **Private Rooms**: Handles target-specific messages (e.g., transaction results or administrative schedule changes) strictly to the authenticated student's session.
+
+> [!TIP]
+> **WebSocket Security Check**: Unauthenticated socket connections are allowed to connect but placed inside a **10-second authentication window**. If they fail to emit the validated token handshake, the connection is forcefully closed.
 
 ---
 
