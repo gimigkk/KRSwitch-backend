@@ -7,3 +7,11 @@ node_modules/
 *.log
 .DS_Store
 dist/
+
+# Local databases & uploads
+prisma/dev.db
+storage/*
+!storage/master/
+storage/master/*
+!storage/.gitkeep
+!storage/master/.gitkeep
