@@ -38,17 +38,42 @@ describe('requireAuth', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('returns 401 and clears cookie when token is invalid / expired', () => {
+  it('returns 401 and clears cookie when token is invalid / expired (production domain)', () => {
+    const originalDomain = process.env.COOKIE_DOMAIN;
+    process.env.COOKIE_DOMAIN = 'production.com';
+    
     const req  = { cookies: { token: 'definitely.not.valid' } } as unknown as Request;
     const res  = makeRes();
     const next = makeNext();
 
     requireAuth(req, res, next);
 
-    expect(res.clearCookie).toHaveBeenCalledWith('token');
+    expect(res.clearCookie).toHaveBeenCalledTimes(2);
+    expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
+    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'production.com' });
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'Session expired, please log in again' });
     expect(next).not.toHaveBeenCalled();
+    
+    process.env.COOKIE_DOMAIN = originalDomain;
+  });
+
+  it('returns 401 and clears ONLY host cookie when token is invalid / expired (localhost)', () => {
+    const originalDomain = process.env.COOKIE_DOMAIN;
+    process.env.COOKIE_DOMAIN = 'localhost';
+    
+    const req  = { cookies: { token: 'definitely.not.valid' } } as unknown as Request;
+    const res  = makeRes();
+    const next = makeNext();
+
+    requireAuth(req, res, next);
+
+    expect(res.clearCookie).toHaveBeenCalledTimes(1);
+    expect(res.clearCookie).toHaveBeenCalledWith('token');
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+    
+    process.env.COOKIE_DOMAIN = originalDomain;
   });
 
   it('returns 401 for a structurally valid JWT signed with the wrong secret', () => {

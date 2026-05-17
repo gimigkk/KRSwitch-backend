@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { Server } from 'socket.io';
 import { requireAuth } from '../middleware/authMiddleware';
 import { asyncHandler, validate } from '../middleware/helpers';
+import { logActivity } from '../utils/activity';
 import { prisma } from '../prisma/db';
 import { getOnlineCount } from '../socket/socketHandler';
 import { randomizeEnrollments } from '../utils/seeding';
@@ -64,7 +65,10 @@ const requireAdmin = asyncHandler(async (req: any, res: any, next: any) => {
   }
   const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
   if (!dbUser || dbUser.isActive === false) {
-    res.clearCookie('token');
+    res.clearCookie('token'); // Clear potential zombie cookie
+    if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
+      res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
+    }
     return res.status(401).json({ error: 'Account has been disabled' });
   }
   next();
@@ -77,7 +81,10 @@ const requireSuperAdmin = asyncHandler(async (req: any, res: any, next: any) => 
   }
   const dbUser = await prisma.user.findUnique({ where: { nim: req.user.nim }, select: { isActive: true } });
   if (!dbUser || dbUser.isActive === false) {
-    res.clearCookie('token');
+    res.clearCookie('token'); // Clear potential zombie cookie
+    if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
+      res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
+    }
     return res.status(401).json({ error: 'Account has been disabled' });
   }
   next();
@@ -112,28 +119,6 @@ router.get('/stats', requireAuth, requireAdmin, asyncHandler(async (_req: any, r
   const onlineCount = getOnlineCount();
   res.json({ totalStudents, totalClasses, totalEnrollments, activeOffers, successfulTrades, onlineCount });
 }));
-
-// --- Activity Logging Helper ---
-async function logActivity(type: string, nim: string, details: string) {
-  try {
-    const model = (prisma as any).activityLog;
-    if (!model) {
-      console.warn('ActivityLog model undefined in prisma client');
-      return;
-    }
-    const log = await model.create({
-      data: {
-        action_type: type,
-        user_nim: nim,
-        details: details
-      }
-    });
-    io.emit('admin-log-created', log);
-    return log;
-  } catch (err: any) {
-    console.error('Failed to log activity:', err.message);
-  }
-}
 
 // ─── Logs (Real Audit Trail) ────────────────────────────────────────────────
 
@@ -176,6 +161,8 @@ router.post(
 
 
 
+    const stripHtml = (str: string) => str.replace(/<[^>]*>?/gm, '');
+
     const data = rows.map((row, idx) => {
       const getVal = (keys: string[]) => {
         for (const key of keys) {
@@ -186,13 +173,13 @@ router.post(
       };
 
       const mapped = {
-        courseCode: String(getVal(['courseCode', 'course_code', 'kode_matkul'])).trim(),
-        courseName: String(getVal(['courseName', 'course_name', 'nama_matkul'])).trim(),
-        classCode: String(getVal(['classCode', 'class_code', 'kelas'])).trim(),
-        day: mapDay(String(getVal(['day', 'hari'])).trim()),
-        timeStart: String(getVal(['timeStart', 'time_start', 'jam_mulai', 'ts'])).trim(),
-        timeEnd: String(getVal(['timeEnd', 'time_end', 'jam_selesai', 'te'])).trim(),
-        room: String(getVal(['room', 'ruang'])).trim(),
+        courseCode: stripHtml(String(getVal(['courseCode', 'course_code', 'kode_matkul'])).trim()),
+        courseName: stripHtml(String(getVal(['courseName', 'course_name', 'nama_matkul'])).trim()),
+        classCode: stripHtml(String(getVal(['classCode', 'class_code', 'kelas'])).trim()),
+        day: mapDay(stripHtml(String(getVal(['day', 'hari'])).trim())),
+        timeStart: stripHtml(String(getVal(['timeStart', 'time_start', 'jam_mulai', 'ts'])).trim()),
+        timeEnd: stripHtml(String(getVal(['timeEnd', 'time_end', 'jam_selesai', 'te'])).trim()),
+        room: stripHtml(String(getVal(['room', 'ruang'])).trim()),
       };
 
       return mapped;
@@ -214,8 +201,10 @@ router.post(
       });
     }
 
-    await prisma.parallelClass.deleteMany({}); // Only delete if we have new data to replace it
-    const result = await prisma.parallelClass.createMany({ data });
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.parallelClass.deleteMany({});
+      return await tx.parallelClass.createMany({ data, skipDuplicates: true });
+    });
     
     // SAVE FILE TO DISK
     const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_classes.csv');
@@ -248,6 +237,8 @@ router.post(
         .on('error', reject);
     });
 
+    const stripHtml = (str: string) => str.replace(/<[^>]*>?/gm, '');
+
     const data = rows.map(row => {
       const getVal = (keys: string[]) => {
         for (const key of keys) {
@@ -258,9 +249,9 @@ router.post(
       };
 
       return {
-        nim: String(getVal(['nim', 'student_id'])).toUpperCase().trim(),
-        name: String(getVal(['name', 'nama', 'full_name'])).trim(),
-        email: String(getVal(['email'])).toLowerCase().trim(),
+        nim: stripHtml(String(getVal(['nim', 'student_id'])).toUpperCase().trim()),
+        name: stripHtml(String(getVal(['name', 'nama', 'full_name'])).trim()),
+        email: stripHtml(String(getVal(['email'])).toLowerCase().trim()),
         role: 'student'
       };
     }).filter(d => d.nim && d.name);
@@ -278,13 +269,12 @@ router.post(
       });
     }
 
-    // Clear old students first (Master Data Reset)
-    console.log('Cleaning old students data...');
-    await prisma.user.deleteMany({ where: { role: 'student' } });
-
-    // Insert students
-    // Insert students
-    const result = await prisma.user.createMany({ data });
+    // Clear old students first (Master Data Reset) inside transaction
+    console.log('Cleaning old students data inside atomic transaction...');
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.user.deleteMany({ where: { role: 'student' } });
+      return await tx.user.createMany({ data, skipDuplicates: true });
+    });
 
     // SAVE FILE TO DISK
     const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_students.csv');
@@ -305,6 +295,10 @@ router.post(
   requireAuth,
   requireAdmin,
   asyncHandler(async (req: any, res: any) => {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Randomisasi dinonaktifkan di environment production.' });
+    }
+
     io.emit('admin-process-start', { message: 'Randomizing enrollments...' });
     const result = await randomizeEnrollments();
     
@@ -407,29 +401,129 @@ router.delete(
 
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    if (type === 'students') {
-      await prisma.$transaction([
-        prisma.notification.deleteMany({}),
-        prisma.barterOffer.deleteMany({}),
-        prisma.enrollment.deleteMany({}),
-        prisma.user.deleteMany({ where: { role: 'student' } })
-      ]);
-    } else {
-      await prisma.$transaction([
-        prisma.notification.deleteMany({}),
-        prisma.barterOffer.deleteMany({}),
-        prisma.enrollment.deleteMany({}),
-        prisma.parallelClass.deleteMany({})
-      ]);
-    }
-
     io.emit('admin-master-files-updated', { type, exists: false });
     
-    await logActivity('DELETE_MASTER', (req as any).user.nim, `Deleted master data for: ${type}. Related enrollments cleared.`);
+    await logActivity('DELETE_MASTER', (req as any).user.nim, `Deleted master CSV file for: ${type}. Live database remains intact.`);
 
     res.json({ message: `Data ${type} berhasil dihapus.` });
   })
 );
+
+// ─── Class / Course Management ─────────────────────────────────────────────────
+
+// GET /api/admin/classes
+router.get('/classes', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+  const search = String(req.query.search ?? '').trim();
+
+  const classes = await prisma.parallelClass.findMany({
+    where: search ? {
+      OR: [
+        { courseCode: { contains: search, mode: 'insensitive' } },
+        { courseName: { contains: search, mode: 'insensitive' } },
+        { classCode: { contains: search, mode: 'insensitive' } },
+      ]
+    } : {},
+    include: {
+      _count: {
+        select: { enrollments: true }
+      }
+    },
+    orderBy: [{ courseCode: 'asc' }, { classCode: 'asc' }],
+  });
+
+  const formatted = classes.map(c => ({
+    id: c.id,
+    courseCode: c.courseCode,
+    courseName: c.courseName,
+    classCode: c.classCode,
+    day: mapDay(c.day),
+    timeStart: c.timeStart,
+    timeEnd: c.timeEnd,
+    room: c.room,
+    enrollmentCount: c._count.enrollments
+  }));
+
+  res.json(formatted);
+}));
+
+// POST /api/admin/classes
+router.post('/classes', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+  const { courseCode, courseName, classCode, day, timeStart, timeEnd, room } = req.body;
+
+  if (!courseCode || !courseName || !classCode) {
+    return res.status(400).json({ error: 'courseCode, courseName, dan classCode wajib diisi' });
+  }
+
+  if (timeStart && !/^([01]\d|2[0-3]):?([0-5]\d)$/.test(timeStart)) {
+    return res.status(400).json({ error: 'Format timeStart tidak valid (HH:MM)' });
+  }
+  if (timeEnd && !/^([01]\d|2[0-3]):?([0-5]\d)$/.test(timeEnd)) {
+    return res.status(400).json({ error: 'Format timeEnd tidak valid (HH:MM)' });
+  }
+
+  const newClass = await prisma.parallelClass.create({
+    data: { 
+      courseCode: String(courseCode).trim().toUpperCase(), 
+      courseName: String(courseName).trim(), 
+      classCode: String(classCode).trim().toUpperCase(), 
+      day: String(day ? mapDay(String(day)) : '').trim(), 
+      timeStart: String(timeStart || '').trim(), 
+      timeEnd: String(timeEnd || '').trim(), 
+      room: String(room || '').trim() 
+    }
+  });
+
+  await logActivity('CREATE_CLASS', (req as any).user.nim, `Manually created class: ${newClass.courseCode} - ${newClass.classCode}.`);
+  io.emit('admin-schedule-updated', { count: 1 });
+  res.status(201).json(newClass);
+}));
+
+// PUT /api/admin/classes/:id
+router.put('/classes/:id', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+  const { id } = req.params;
+  const { courseCode, courseName, classCode, day, timeStart, timeEnd, room } = req.body;
+
+  if (timeStart && !/^([01]\d|2[0-3]):?([0-5]\d)$/.test(timeStart)) {
+    return res.status(400).json({ error: 'Format timeStart tidak valid (HH:MM)' });
+  }
+  if (timeEnd && !/^([01]\d|2[0-3]):?([0-5]\d)$/.test(timeEnd)) {
+    return res.status(400).json({ error: 'Format timeEnd tidak valid (HH:MM)' });
+  }
+
+  const existing = await prisma.parallelClass.findUnique({ where: { id: parseInt(id) } });
+  if (!existing) return res.status(404).json({ error: 'Kelas tidak ditemukan' });
+
+  const updatedClass = await prisma.parallelClass.update({
+    where: { id: parseInt(id) },
+    data: { 
+      ...(courseCode && { courseCode: String(courseCode).trim().toUpperCase() }),
+      ...(courseName && { courseName: String(courseName).trim() }),
+      ...(classCode && { classCode: String(classCode).trim().toUpperCase() }),
+      ...(day !== undefined && { day: String(mapDay(String(day))).trim() }),
+      ...(timeStart !== undefined && { timeStart: String(timeStart).trim() }),
+      ...(timeEnd !== undefined && { timeEnd: String(timeEnd).trim() }),
+      ...(room !== undefined && { room: String(room).trim() })
+    }
+  });
+
+  await logActivity('UPDATE_CLASS', (req as any).user.nim, `Updated class details for: ${updatedClass.courseCode} - ${updatedClass.classCode}.`);
+  io.emit('admin-schedule-updated', { count: 1 });
+  res.json(updatedClass);
+}));
+
+// DELETE /api/admin/classes/:id
+router.delete('/classes/:id', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+  const { id } = req.params;
+
+  const existing = await prisma.parallelClass.findUnique({ where: { id: parseInt(id) } });
+  if (!existing) return res.status(404).json({ error: 'Kelas tidak ditemukan' });
+
+  await prisma.parallelClass.delete({ where: { id: parseInt(id) } });
+
+  await logActivity('DELETE_CLASS', (req as any).user.nim, `Deleted class: ${existing.courseCode} - ${existing.classCode}.`);
+  io.emit('admin-schedule-updated', { count: -1 });
+  res.json({ message: 'Kelas berhasil dihapus' });
+}));
 
 // ─── Class Student List ──────────────────────────────────────────────────────
 

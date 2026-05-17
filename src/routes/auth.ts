@@ -109,12 +109,13 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
+    res.clearCookie('token'); // Kill potential zombie cookie before assigning new valid one
     res.cookie('token', sessionToken, {
       httpOnly: true,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      domain: process.env.COOKIE_DOMAIN ?? 'localhost',
+      ...(process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost' ? { domain: process.env.COOKIE_DOMAIN } : {})
     });
 
     res.redirect(`${FRONTEND_URL}/auth/callback?success=true`);
@@ -126,11 +127,12 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 });
 
 router.post('/logout', (_req: Request, res: Response) => {
+  res.clearCookie('token'); // Kill potential zombie cookie
   res.clearCookie('token', {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
-    domain: process.env.COOKIE_DOMAIN ?? 'localhost',
+    ...(process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost' ? { domain: process.env.COOKIE_DOMAIN } : {})
   });
   res.json({ message: 'Logged out' });
 });

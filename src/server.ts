@@ -13,6 +13,7 @@ import adminRouter from './routes/admin';
 import adminApiRouter from './routes/adminRoutes';
 import { createOffersRouter } from './routes/offers';
 import { setupSocket } from './socket/socketHandler';
+import { setActivityIo } from './utils/activity';
 
 const app    = express();
 const server = http.createServer(app);
@@ -22,6 +23,8 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
 const io = new Server(server, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST', 'DELETE', 'PATCH'], credentials: true },
 });
+
+setActivityIo(io);
 
 app.use(helmet({
   crossOriginOpenerPolicy: false,

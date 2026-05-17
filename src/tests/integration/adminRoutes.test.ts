@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import fs from 'fs';
 import { prisma, buildTxMock } from '../mocks/db';
 import { mockIo, resetIoMocks } from '../mocks/io';
+
+vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
 
 vi.mock('../../prisma/db', () => ({ prisma }));
 
@@ -341,5 +344,229 @@ describe('Super Admin Operations', () => {
       .send({ role: 'super_admin' });
     
     expect(res.status).toBe(200);
+  });
+});
+
+// ─── Course Management ────────────────────────────────────────────────────────
+describe('Course Management', () => {
+  it('GET /api/admin/classes returns classes list', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.parallelClass.findMany).mockResolvedValue([
+      { id: 1, courseCode: 'CS101', courseName: 'Intro to CS', classCode: 'K1', day: 'Senin', timeStart: '08:00', timeEnd: '10:00', room: 'A1', _count: { enrollments: 0 } }
+    ] as any);
+    
+    const res = await request(app).get('/api/admin/classes').set('Cookie', authCookie(operatorUser));
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBe(1);
+    expect(res.body[0].courseCode).toBe('CS101');
+  });
+
+  it('POST /api/admin/classes creates a new class and emits event', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.parallelClass.create).mockResolvedValue({ id: 2, courseCode: 'CS102', classCode: 'K2' } as any);
+    
+    const res = await request(app)
+      .post('/api/admin/classes')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ courseCode: 'cs102', courseName: 'Data Structures', classCode: 'k2', day: '1', timeStart: '08:00', timeEnd: '09:40', room: 'R2' });
+    
+    expect(res.status).toBe(201);
+    expect(prisma.parallelClass.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        courseCode: 'CS102',
+        classCode: 'K2',
+        day: 'Senin',
+        timeStart: '08:00',
+        timeEnd: '09:40'
+      })
+    });
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-schedule-updated', { count: 1 });
+  });
+
+  it('POST /api/admin/classes rejects invalid time format', async () => {
+    mockActiveUser(operatorUser);
+    
+    const res = await request(app)
+      .post('/api/admin/classes')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ courseCode: 'CS102', courseName: 'Test', classCode: 'K2', timeStart: '8:00 AM' }); // Invalid HH:MM
+    
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Format timeStart tidak valid/);
+  });
+
+  it('PUT /api/admin/classes/:id updates a class', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.parallelClass.findUnique).mockResolvedValue({ id: 1 } as any);
+    vi.mocked(prisma.parallelClass.update).mockResolvedValue({ id: 1, courseCode: 'CS101', room: 'NEW_ROOM' } as any);
+    
+    const res = await request(app)
+      .put('/api/admin/classes/1')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ room: 'NEW_ROOM' });
+    
+    expect(res.status).toBe(200);
+    expect(prisma.parallelClass.update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: expect.objectContaining({ room: 'NEW_ROOM' })
+    });
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-schedule-updated', { count: 1 });
+  });
+
+  it('DELETE /api/admin/classes/:id deletes a class', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.parallelClass.findUnique).mockResolvedValue({ id: 1 } as any);
+    vi.mocked(prisma.parallelClass.delete).mockResolvedValue({ id: 1 } as any);
+    
+    const res = await request(app).delete('/api/admin/classes/1').set('Cookie', authCookie(operatorUser));
+    
+    expect(res.status).toBe(200);
+    expect(prisma.parallelClass.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-schedule-updated', { count: -1 });
+  });
+});
+
+// ─── Admin Management ────────────────────────────────────────────────────────
+
+describe('Super Admin Management Routes', () => {
+  it('GET /api/admin/admins returns admins list', async () => {
+    mockActiveUser(superAdminUser);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([superAdminUser, operatorUser] as any);
+
+    const res = await request(app).get('/api/admin/admins').set('Cookie', authCookie(superAdminUser));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { role: { in: ['operator', 'super_admin'] } }
+    }));
+  });
+
+  it('PUT /api/admin/admins/:nim prevents self-modification', async () => {
+    mockActiveUser(superAdminUser);
+
+    const res = await request(app)
+      .put(`/api/admin/admins/${superAdminUser.nim}`)
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ role: 'operator' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Cannot modify your own admin account/);
+  });
+
+  it('DELETE /api/admin/admins/:nim prevents self-deletion', async () => {
+    mockActiveUser(superAdminUser);
+
+    const res = await request(app)
+      .delete(`/api/admin/admins/${superAdminUser.nim}`)
+      .set('Cookie', authCookie(superAdminUser));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Cannot delete your own admin account/);
+  });
+});
+
+// ─── Batch Operations (Imports & Resets) ─────────────────────────────────────
+
+describe('Batch Operations', () => {
+  it('POST /api/admin/import-students uses a transaction to ensure atomicity', async () => {
+    mockActiveUser(operatorUser);
+    const csvBuffer = Buffer.from('nim,name,email\nM0001,John,j@b.com');
+    const txMock = {
+      user: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 })
+      }
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => callback(txMock));
+
+    const res = await request(app)
+      .post('/api/admin/import-students')
+      .set('Cookie', authCookie(operatorUser))
+      .attach('file', csvBuffer, 'test.csv');
+
+    expect(res.status).toBe(200);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(txMock.user.deleteMany).toHaveBeenCalled();
+    expect(txMock.user.createMany).toHaveBeenCalled();
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-master-files-updated', { type: 'students', exists: true });
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-user-created', expect.anything());
+  });
+
+  it('POST /api/admin/import-classes uses a transaction to ensure atomicity', async () => {
+    mockActiveUser(operatorUser);
+    
+    // Create a dummy CSV buffer with one class
+    const csvBuffer = Buffer.from('courseCode,courseName,classCode,day,timeStart,timeEnd,room\nCS101,Intro,K1,1,08:00,10:00,101');
+    
+    const txMock = {
+      parallelClass: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 })
+      }
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => {
+      return callback(txMock);
+    });
+
+    const res = await request(app)
+      .post('/api/admin/import-classes')
+      .set('Cookie', authCookie(operatorUser))
+      .attach('file', csvBuffer, 'test.csv');
+
+    expect(res.status).toBe(200);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(txMock.parallelClass.deleteMany).toHaveBeenCalled();
+    expect(txMock.parallelClass.createMany).toHaveBeenCalled();
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-master-files-updated', { type: 'classes', exists: true });
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-schedule-updated', expect.anything());
+  });
+
+  it('DELETE /api/admin/master-files/:type only removes file and does NOT wipe database', async () => {
+    mockActiveUser(superAdminUser);
+    
+    // Reset vi.mocked calls
+    vi.clearAllMocks();
+
+    const res = await request(app)
+      .delete('/api/admin/master-files/students')
+      .set('Cookie', authCookie(superAdminUser));
+
+    expect(res.status).toBe(200);
+    // Should NOT have called a transaction to wipe DB
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-master-files-updated', { type: 'students', exists: false });
+  });
+
+  it('POST /api/admin/seed-random fails with 403 in production', async () => {
+    mockActiveUser(superAdminUser);
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    const res = await request(app)
+      .post('/api/admin/seed-random')
+      .set('Cookie', authCookie(superAdminUser));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/dinonaktifkan/);
+    
+    process.env.NODE_ENV = originalEnv;
+  });
+
+  it('POST /api/admin/reset uses transaction to wipe database', async () => {
+    mockActiveUser(superAdminUser);
+    
+    vi.mocked(prisma.$transaction).mockResolvedValue([
+      { count: 1 }, { count: 1 }, { count: 1 }, { count: 1 }, { count: 1 }
+    ] as any);
+
+    const res = await request(app)
+      .post('/api/admin/reset')
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ confirm: 'RESET_ALL_DATA' });
+
+    expect(res.status).toBe(200);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-system-reset', expect.anything());
   });
 });

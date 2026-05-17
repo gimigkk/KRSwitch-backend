@@ -12,6 +12,7 @@ import {
   createNotification,
   autoMatch,
 } from '../controllers/offerController';
+import { logActivity } from '../utils/activity';
 
 export function createOffersRouter(io: Server) {
   const router = Router();
@@ -57,6 +58,8 @@ export function createOffersRouter(io: Server) {
       data: { offererNim, myClassId, wantedClassId, status: 'open' },
       include: { offerer: { select: { nim: true, name: true } }, myClass: true, wantedClass: true },
     });
+
+    await logActivity('BARTER_CREATED', offererNim, `Created open barter offer for ${myClass.courseCode} (${myClass.classCode}) -> looking for ${wantedClass.classCode}.`);
 
     io.emit('new-offer', offer);
 
@@ -167,6 +170,12 @@ export function createOffersRouter(io: Server) {
 
     const { offer, offererCancelled, takerCancelled, offererNotification, takerNotification } = result;
 
+    await logActivity(
+      'BARTER_MATCHED',
+      takerNim,
+      `Successfully matched with ${offer.offerer.name} (${offer.offererNim}) for course ${offer.myClass.courseCode}. Swapped ${offer.wantedClass.classCode} for ${offer.myClass.classCode}.`
+    );
+
     io.emit('offer-taken', { offerId });
     io.emit('enrollments-swapped', {
       swaps: [
@@ -202,6 +211,8 @@ export function createOffersRouter(io: Server) {
     if (offer.status !== 'open') return res.status(400).json({ error: 'Cannot cancel matched offer' });
 
     await prisma.barterOffer.update({ where: { id: offerId }, data: { status: 'cancelled' } });
+
+    await logActivity('BARTER_CANCELLED', userNim, `Cancelled their own open barter offer (Offer ID: ${offerId}).`);
 
     io.emit('offer-taken', { offerId });
     res.json({ message: 'Offer cancelled' });
