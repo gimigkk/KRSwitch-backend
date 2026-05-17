@@ -1,6 +1,6 @@
-# KRSwitch — Developer Onboarding Playbook
+# 🚀 KRSwitch Backend — Developer Onboarding Playbook
 
-This playbook provides configuration steps, hands-on codebase exercises, and documentation auto-generation instructions for new developers.
+This playbook provides configuration steps, code walkthrough exercises, and document auto-generation instructions for the backend service.
 
 ---
 
@@ -9,7 +9,7 @@ This playbook provides configuration steps, hands-on codebase exercises, and doc
 ### 1. Database Initialization
 Verify **Node.js 20+** and **PostgreSQL 16** are active locally.
 1. Spin up a local PostgreSQL instance.
-2. In the `KRSwitch-backend` root, copy `.env` file details based on the [Backend README](file:///home/gimigkk/Desktop/Projects/KRSwitch/KRSwitch-backend/README.md).
+2. In this folder (`KRSwitch-backend`), copy `.env.example` to `.env` (or create it based on the README).
 3. Ensure `DATABASE_URL` matches your local database settings.
 
 > [!IMPORTANT]
@@ -18,49 +18,25 @@ Verify **Node.js 20+** and **PostgreSQL 16** are active locally.
 ### 2. Run Backend Service
 Initialize dependencies, apply database migrations, and seed mock records:
 ```bash
-cd KRSwitch-backend
 npm install
 npm run migrate       # Runs Prisma migrations on PostgreSQL
 npm run seed:barter   # Seeds 151 students, 7 courses, and pre-matched barters
 npm run dev           # Runs API on http://localhost:5000
 ```
-Verify via `curl http://localhost:5000/health`.
+Verify the service is active by calling `curl http://localhost:5000/health`.
 
-### 3. Run Frontend Client
+### 3. Verify Tests
 ```bash
-cd KRSwitch-frontend
-npm install
-npm run dev           # Runs Vite dev server on http://localhost:5173
-```
-Access the client at `http://localhost:5173`.
-
-> [!NOTE]
-> **Port Mappings**: By default, the React Vite client runs on port `5173` and maps backend calls to port `5000`. If you override these ports, ensure you update CORS origins in the backend `.env`.
-
-### 4. Verify Tests
-```bash
-# In KRSwitch-backend:
 npm test
-
-# In KRSwitch-frontend:
-npm run cypress:run
 ```
 
 ---
 
 ## 🛠️ Codebase Walkthrough Exercises
 
-Complete these three tasks to understand the routing, validation, and rendering mechanics of the project:
+Complete these two tasks to understand backend route logic, database operations, and schema validations:
 
-### Exercise 1: Hover Styles & Re-render Checks
-* **File**: [BarterCard.jsx](file:///home/gimigkk/Desktop/Projects/KRSwitch/KRSwitch-frontend/src/components/dash/BarterCard.jsx)
-* **Goal**: Observe component rendering boundaries.
-* **Task**:
-  1. Modify the card's active border accent on hover.
-  2. Place `console.log("Render card id:", offer.id)` inside the card component function body.
-  3. Observe logs in the browser console when selecting filters. Note how component updates are memoized via `Dashboard.jsx`.
-
-### Exercise 2: Add Audit Log Parameter
+### Exercise 1: Custom Audit Log parameters
 * **File**: [adminRoutes.ts](file:///home/gimigkk/Desktop/Projects/KRSwitch/KRSwitch-backend/src/routes/adminRoutes.ts)
 * **Goal**: Trace database-driven audit logging.
 * **Task**:
@@ -68,7 +44,7 @@ Complete these three tasks to understand the routing, validation, and rendering 
   2. Change the string details parameter of the `logActivity` call when creating a new student to append their email address.
   3. Create a test student in the Admin tab "Database Mahasiswa" and verify the visual logs table instantly matches your modification.
 
-### Exercise 3: Add Validation Rules
+### Exercise 2: Custom Validation Rules
 * **File**: [offerController.ts](file:///home/gimigkk/Desktop/Projects/KRSwitch/KRSwitch-backend/src/controllers/offerController.ts)
 * **Goal**: Trace API schema validations.
 * **Task**:
@@ -77,13 +53,13 @@ Complete these three tasks to understand the routing, validation, and rendering 
   3. Append a matching test case in `offerController.test.ts`.
 
 > [!TIP]
-> **Hot Module Reloading**: When completing exercises 2 and 3, backend modifications will automatically trigger server restarts via ts-node-dev. You do not need to manually boot the server between files updates.
+> **Hot Module Reloading**: When completing these exercises, backend modifications will automatically trigger server restarts via ts-node-dev. You do not need to manually boot the server between files updates.
 
 ---
 
-## 📊 Code Dependency Graphs & Documentation Generators
+## 📊 Dependency Graphs & Code Docs Generation
 
-Use these packages to dynamically map directories and auto-generate code documentations:
+Use these packages to dynamically map directories and auto-generate code documentations for the backend service:
 
 ### 1. Module Dependencies (Madge)
 Generates dependency charts for source files:
@@ -91,10 +67,7 @@ Generates dependency charts for source files:
 npm install --save-dev madge
 
 # Render backend dependencies to SVG:
-npx madge --image backend-graph.svg --layout dot KRSwitch-backend/src/server.ts
-
-# Render frontend components to SVG:
-npx madge --image frontend-graph.svg --layout dot KRSwitch-frontend/src/main.jsx
+npx madge --image backend-graph.svg --layout dot src/server.ts
 ```
 
 > [!TIP]
