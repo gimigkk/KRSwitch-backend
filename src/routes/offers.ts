@@ -205,15 +205,35 @@ export function createOffersRouter(io: Server) {
     const offerId = parseInt(req.params.id);
     const userNim = req.user!.nim;
 
-    const offer = await prisma.barterOffer.findUnique({ where: { id: offerId } });
+    const offer = await prisma.barterOffer.findUnique({ 
+      where: { id: offerId },
+      include: { myClass: true }
+    });
     if (!offer) return res.status(404).json({ error: 'Offer not found' });
     if (offer.offererNim !== userNim) return res.status(403).json({ error: 'Not your offer' });
     if (offer.status !== 'open') return res.status(400).json({ error: 'Cannot cancel matched offer' });
 
-    await prisma.barterOffer.update({ where: { id: offerId }, data: { status: 'cancelled' } });
+    await prisma.$transaction(async (tx) => {
+      await tx.barterOffer.update({ where: { id: offerId }, data: { status: 'cancelled' } });
+      await createNotification(tx, userNim, 'barter_cancelled', {
+        offerId,
+        courseCode: offer.myClass.courseCode,
+        classCode: offer.myClass.classCode,
+        reason: 'self_cancelled'
+      });
+    });
 
     await logActivity('BARTER_CANCELLED', userNim, `Cancelled their own open barter offer (Offer ID: ${offerId}).`);
 
+    // Fetch the generated notification to send via socket
+    const notification = await prisma.notification.findFirst({
+      where: { recipientNim: userNim, type: 'barter_cancelled' },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (notification) {
+      io.to(`user-${userNim}`).emit('new-notification', notification);
+    }
     io.emit('offer-taken', { offerId });
     res.json({ message: 'Offer cancelled' });
   }));

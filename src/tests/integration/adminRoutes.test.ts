@@ -223,14 +223,23 @@ describe('Administrative Operations', () => {
     expect(mockIo.emit).toHaveBeenCalledWith('admin-offers-purged', { count: 5 });
   });
 
-  it('POST /api/admin/override-swap completes manual swap', async () => {
+  it('POST /api/admin/override-swap completes manual swap, creates notifications, and emits events', async () => {
     mockActiveUser(operatorUser);
     vi.mocked(prisma.enrollment.findFirst)
       .mockResolvedValueOnce({ id: 1, parallelClassId: 10, parallelClass: { classCode: 'K01' } } as any)
       .mockResolvedValueOnce({ id: 2, parallelClassId: 20, parallelClass: { classCode: 'K02' } } as any);
     vi.mocked(prisma.$transaction).mockResolvedValue([{}, {}]);
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ nim: 'A', name: 'User A' } as any)
+      .mockResolvedValueOnce({ nim: 'B', name: 'User B' } as any);
     vi.mocked(prisma.barterOffer.findMany).mockResolvedValue([]);
     vi.mocked(prisma.barterOffer.updateMany).mockResolvedValue({} as any);
+
+    const mockNotif1 = { id: 201, recipientNim: 'A', type: 'admin_override_swap', data: {} };
+    const mockNotif2 = { id: 202, recipientNim: 'B', type: 'admin_override_swap', data: {} };
+    vi.mocked(prisma.notification.create)
+      .mockResolvedValueOnce(mockNotif1 as any)
+      .mockResolvedValueOnce(mockNotif2 as any);
 
     const res = await request(app)
       .post('/api/admin/override-swap')
@@ -239,6 +248,11 @@ describe('Administrative Operations', () => {
     
     expect(res.status).toBe(200);
     expect(mockIo.emit).toHaveBeenCalledWith('enrollments-swapped', expect.any(Object));
+    expect(prisma.notification.create).toHaveBeenCalledTimes(2);
+    expect(mockIo.to).toHaveBeenCalledWith('user-A');
+    expect(mockIo.to).toHaveBeenCalledWith('user-B');
+    expect(mockIo.emit).toHaveBeenCalledWith('new-notification', mockNotif1);
+    expect(mockIo.emit).toHaveBeenCalledWith('new-notification', mockNotif2);
   });
 
   // CRIT-2: System reset security
@@ -423,6 +437,130 @@ describe('Course Management', () => {
     expect(res.status).toBe(200);
     expect(prisma.parallelClass.delete).toHaveBeenCalledWith({ where: { id: 1 } });
     expect(mockIo.emit).toHaveBeenCalledWith('admin-schedule-updated', { count: -1 });
+  });
+});
+
+// ─── Enrollment & KRS Management ─────────────────────────────────────────────
+describe('Enrollment & KRS Management', () => {
+  it('POST /api/admin/enrollments creates enrollment and emits event', async () => {
+    mockActiveUser(operatorUser);
+    const mockEnroll = { id: 1, nim: 'M123', parallelClassId: 10, parallelClass: { courseCode: 'CS101', classCode: 'K01' } };
+    vi.mocked(prisma.enrollment.create).mockResolvedValue(mockEnroll as any);
+
+    const res = await request(app)
+      .post('/api/admin/enrollments')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ nim: 'M123', parallelClassId: 10 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe(1);
+    expect(mockIo.emit).toHaveBeenCalledWith('admin-enrollment-created', mockEnroll);
+  });
+
+  it('PUT /api/admin/enrollments/:id updates enrollment, creates notification, and emits events', async () => {
+    mockActiveUser(operatorUser);
+    const existingEnroll = { id: 1, nim: 'M123', parallelClassId: 10, parallelClass: { courseCode: 'CS101', classCode: 'K01' } };
+    const updatedEnroll = { 
+      id: 1, 
+      nim: 'M123', 
+      parallelClassId: 20, 
+      parallelClass: { courseCode: 'CS101', classCode: 'K02' },
+      user: { name: 'Student' }
+    };
+    const mockNotif = { id: 99, recipientNim: 'M123', type: 'admin_enrollment_updated', data: {} };
+
+    vi.mocked(prisma.enrollment.findUnique).mockResolvedValue(existingEnroll as any);
+    vi.mocked(prisma.enrollment.update).mockResolvedValue(updatedEnroll as any);
+    vi.mocked(prisma.notification.create).mockResolvedValue(mockNotif as any);
+
+    const res = await request(app)
+      .put('/api/admin/enrollments/1')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ newParallelClassId: 20 });
+
+    expect(res.status).toBe(200);
+    expect(prisma.notification.create).toHaveBeenCalledWith({
+      data: {
+        recipientNim: 'M123',
+        type: 'admin_enrollment_updated',
+        data: {
+          courseCode: 'CS101',
+          oldClassCode: 'K01',
+          newClassCode: 'K02'
+        }
+      }
+    });
+    expect(mockIo.to).toHaveBeenCalledWith('user-M123');
+    expect(mockIo.emit).toHaveBeenCalledWith('new-notification', mockNotif);
+  });
+
+  it('DELETE /api/admin/enrollments/:id deletes enrollment, creates notification, and emits events', async () => {
+    mockActiveUser(operatorUser);
+    const existingEnroll = { id: 1, nim: 'M123', parallelClassId: 10, parallelClass: { courseCode: 'CS101', classCode: 'K01' } };
+    const mockNotif = { id: 100, recipientNim: 'M123', type: 'admin_enrollment_deleted', data: {} };
+
+    vi.mocked(prisma.enrollment.findUnique).mockResolvedValue(existingEnroll as any);
+    vi.mocked(prisma.enrollment.delete).mockResolvedValue(existingEnroll as any);
+    vi.mocked(prisma.notification.create).mockResolvedValue(mockNotif as any);
+
+    const res = await request(app)
+      .delete('/api/admin/enrollments/1')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(200);
+    expect(prisma.notification.create).toHaveBeenCalledWith({
+      data: {
+        recipientNim: 'M123',
+        type: 'admin_enrollment_deleted',
+        data: {
+          courseCode: 'CS101',
+          classCode: 'K01'
+        }
+      }
+    });
+    expect(mockIo.to).toHaveBeenCalledWith('user-M123');
+    expect(mockIo.emit).toHaveBeenCalledWith('new-notification', mockNotif);
+  });
+});
+
+describe('Barter Administration', () => {
+  it('DELETE /api/admin/offers/:id force-cancels offer, creates notification, and emits events', async () => {
+    mockActiveUser(operatorUser);
+    const mockOffer = { id: 1, offererNim: 'M123', status: 'open', myClass: { courseCode: 'CS101', classCode: 'K01' } };
+    const fullOffer = { 
+      id: 1, 
+      offererNim: 'M123', 
+      status: 'cancelled', 
+      offerer: { name: 'Student' }, 
+      myClass: { courseCode: 'CS101', classCode: 'K01' } 
+    };
+    const mockNotif = { id: 101, recipientNim: 'M123', type: 'admin_barter_cancelled', data: {} };
+
+    vi.mocked(prisma.barterOffer.findUnique)
+      .mockResolvedValueOnce(mockOffer as any) // first findUnique inside route
+      .mockResolvedValueOnce(fullOffer as any); // findUnique with include
+    vi.mocked(prisma.barterOffer.update).mockResolvedValue(fullOffer as any);
+    vi.mocked(prisma.notification.create).mockResolvedValue(mockNotif as any);
+
+    const res = await request(app)
+      .delete('/api/admin/offers/1')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(200);
+    expect(prisma.notification.create).toHaveBeenCalledWith({
+      data: {
+        recipientNim: 'M123',
+        type: 'admin_barter_cancelled',
+        data: {
+          offerId: 1,
+          courseCode: 'CS101',
+          classCode: 'K01',
+          reason: 'admin_cancelled'
+        }
+      }
+    });
+    expect(mockIo.to).toHaveBeenCalledWith('user-M123');
+    expect(mockIo.emit).toHaveBeenCalledWith('new-notification', mockNotif);
   });
 });
 

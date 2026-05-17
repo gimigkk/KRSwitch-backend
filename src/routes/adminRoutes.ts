@@ -13,6 +13,7 @@ import { logActivity } from '../utils/activity';
 import { prisma } from '../prisma/db';
 import { getOnlineCount } from '../socket/socketHandler';
 import { randomizeEnrollments } from '../utils/seeding';
+import { createNotification } from '../controllers/offerController';
 
 // ─── Zod Validation Schemas ──────────────────────────────────────────────────
 const createUserSchema = z.object({
@@ -724,7 +725,10 @@ router.put('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (re
     return res.status(400).json({ error: 'newParallelClassId wajib diisi' });
   }
 
-  const existing = await prisma.enrollment.findUnique({ where: { id: enrollmentId } });
+  const existing = await prisma.enrollment.findUnique({ 
+    where: { id: enrollmentId },
+    include: { parallelClass: true }
+  });
   if (!existing) return res.status(404).json({ error: 'Enrollment tidak ditemukan' });
 
   const updated = await prisma.enrollment.update({
@@ -733,11 +737,18 @@ router.put('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (re
     include: { parallelClass: true, user: true },
   });
 
+  const notification = await createNotification(prisma, updated.nim, 'admin_enrollment_updated', {
+    courseCode: updated.parallelClass.courseCode,
+    oldClassCode: existing.parallelClass?.classCode || 'Unknown', // we didn't include parallelClass in existing, let's fix that below if needed, but wait existing doesn't include it. We should fetch it.
+    newClassCode: updated.parallelClass.classCode
+  });
+
   await logActivity('UPDATE_KRS', (req as any).user.nim, `Manual KRS move for ${updated.user.name}: assigned to class ${updated.parallelClass.classCode} (${updated.parallelClass.courseCode}).`);
   
   io.emit('admin-enrollment-updated', updated);
   // Also notify the student specifically
   io.to(`user-${updated.nim}`).emit('enrollment-updated', updated);
+  io.to(`user-${updated.nim}`).emit('new-notification', notification);
   
   res.json(updated);
 }));
@@ -746,14 +757,23 @@ router.put('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (re
 router.delete('/enrollments/:id', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const enrollmentId = parseInt(req.params.id);
 
-  const existing = await prisma.enrollment.findUnique({ where: { id: enrollmentId } });
+  const existing = await prisma.enrollment.findUnique({ 
+    where: { id: enrollmentId },
+    include: { parallelClass: true }
+  });
   if (!existing) return res.status(404).json({ error: 'Enrollment tidak ditemukan' });
 
   const nim = existing.nim;
   await prisma.enrollment.delete({ where: { id: enrollmentId } });
   
+  const notification = await createNotification(prisma, nim, 'admin_enrollment_deleted', {
+    courseCode: existing.parallelClass.courseCode,
+    classCode: existing.parallelClass.classCode
+  });
+  
   io.emit('admin-enrollment-deleted', { id: enrollmentId, nim });
   io.to(`user-${nim}`).emit('enrollment-deleted', { id: enrollmentId });
+  io.to(`user-${nim}`).emit('new-notification', notification);
   
   res.json({ message: 'Mata kuliah berhasil di-drop dari KRS.' });
 }));
@@ -777,6 +797,14 @@ router.delete('/offers/:id', requireAuth, requireAdmin, asyncHandler(async (req:
 
   if (fullOffer) {
     await logActivity('CANCEL_BARTER', (req as any).user.nim, `Force-cancelled barter offer for ${fullOffer.offerer.name} (Course: ${fullOffer.myClass.courseCode}).`);
+    
+    const notification = await createNotification(prisma, fullOffer.offererNim, 'admin_barter_cancelled', {
+      offerId,
+      courseCode: fullOffer.myClass.courseCode,
+      classCode: fullOffer.myClass.classCode,
+      reason: 'admin_cancelled'
+    });
+    io.to(`user-${fullOffer.offererNim}`).emit('new-notification', notification);
   }
   
   io.emit('offer-taken', { offerId });
@@ -824,7 +852,7 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
   }
 
   // Swap in a transaction
-  await prisma.$transaction([
+  const [updated1, updated2] = await prisma.$transaction([
     prisma.enrollment.update({
       where: { id: enroll1.id },
       data: { parallelClassId: enroll2.parallelClassId },
@@ -834,6 +862,30 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
       data: { parallelClassId: enroll1.parallelClassId },
     }),
   ]);
+
+  const [u1, u2] = await Promise.all([
+    prisma.user.findUnique({ where: { nim: nim1 } }),
+    prisma.user.findUnique({ where: { nim: nim2 } })
+  ]);
+
+  const notif1 = await createNotification(prisma, nim1, 'admin_override_swap', {
+    courseCode,
+    counterpartNim: nim2,
+    counterpartName: u2?.name || 'Unknown',
+    oldClassCode: enroll1.parallelClass.classCode,
+    newClassCode: enroll2.parallelClass.classCode
+  });
+
+  const notif2 = await createNotification(prisma, nim2, 'admin_override_swap', {
+    courseCode,
+    counterpartNim: nim1,
+    counterpartName: u1?.name || 'Unknown',
+    oldClassCode: enroll2.parallelClass.classCode,
+    newClassCode: enroll1.parallelClass.classCode
+  });
+
+  io.to(`user-${nim1}`).emit('new-notification', notif1);
+  io.to(`user-${nim2}`).emit('new-notification', notif2);
 
   // Cancel any open barter offers for these students on this course (now stale)
   const staleOffers = await prisma.barterOffer.findMany({
@@ -865,10 +917,7 @@ router.post('/override-swap', requireAuth, requireAdmin, asyncHandler(async (req
     });
   });
 
-  const [u1, u2] = await Promise.all([
-    prisma.user.findUnique({ where: { nim: nim1 } }),
-    prisma.user.findUnique({ where: { nim: nim2 } })
-  ]);
+  // log activity uses u1 and u2 which were fetched above
 
   await logActivity('ADMIN_OVERRIDE_SWAP', (req as any).user.nim, `FORCED SWAP: ${u1?.name} <-> ${u2?.name} for course ${courseCode}.`);
 

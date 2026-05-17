@@ -19,6 +19,7 @@ const SCOPES         = ['openid', 'email', 'profile'];
 interface OAuthContext {
   codeVerifier: string;
   state: string;
+  frontendUrl?: string;
 }
 
 interface JwtPayload {
@@ -38,18 +39,30 @@ const client = new OAuth2Client({
 });
 
 // semua error diarahkan ke halaman callback di popup, AuthCallback.jsx yang handle
-function redirectWithError(res: Response, error: string): void {
-  res.redirect(`${FRONTEND_URL}/auth/callback?error=${error}`);
+function redirectWithError(res: Response, error: string, frontendUrl?: string): void {
+  const target = frontendUrl || FRONTEND_URL;
+  res.redirect(`${target}/auth/callback?error=${error}`);
 }
 
 // --- Routes -------------------------------------------
 
-router.get('/google', async (_req: Request, res: Response) => {
+router.get('/google', async (req: Request, res: Response) => {
   const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync();
   const state = crypto.randomBytes(32).toString('hex');
 
+  const referer = req.headers.referer;
+  let frontendUrl = FRONTEND_URL;
+  if (referer) {
+    try {
+      const url = new URL(referer);
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        frontendUrl = url.origin;
+      }
+    } catch {}
+  }
+
   // disimpen di httpOnly cookie, expire 2 menit, cukup buat round trip ke Google
-  res.cookie('oauth_ctx', JSON.stringify({ codeVerifier, state } satisfies OAuthContext), {
+  res.cookie('oauth_ctx', JSON.stringify({ codeVerifier, state, frontendUrl } satisfies OAuthContext), {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
@@ -69,21 +82,22 @@ router.get('/google', async (_req: Request, res: Response) => {
 router.get('/google/callback', async (req: Request, res: Response) => {
   const { code, state: returnedState, error } = req.query as Record<string, string>;
 
-  if (error) return redirectWithError(res, 'oauth_denied');
-
   const rawCtx = req.cookies?.oauth_ctx as string | undefined;
-  if (!rawCtx || !code) return redirectWithError(res, 'oauth_failed');
-
-  let oauthCtx: OAuthContext;
-  try {
-    oauthCtx = JSON.parse(rawCtx);
-  } catch {
-    return redirectWithError(res, 'oauth_failed');
+  let oauthCtx: OAuthContext | undefined;
+  if (rawCtx) {
+    try {
+      oauthCtx = JSON.parse(rawCtx);
+    } catch {}
   }
+
+  const frontendUrl = oauthCtx?.frontendUrl || FRONTEND_URL;
+
+  if (error) return redirectWithError(res, 'oauth_denied', frontendUrl);
+  if (!rawCtx || !code || !oauthCtx) return redirectWithError(res, 'oauth_failed', frontendUrl);
 
   res.clearCookie('oauth_ctx');
 
-  if (!returnedState || returnedState !== oauthCtx.state) return redirectWithError(res, 'oauth_failed');
+  if (!returnedState || returnedState !== oauthCtx.state) return redirectWithError(res, 'oauth_failed', frontendUrl);
 
   try {
     const { tokens } = await client.getToken({ code, codeVerifier: oauthCtx.codeVerifier });
@@ -94,7 +108,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     });
 
     const googlePayload = ticket.getPayload();
-    if (!googlePayload?.email) return redirectWithError(res, 'oauth_failed');
+    if (!googlePayload?.email) return redirectWithError(res, 'oauth_failed', frontendUrl);
 
     const logId = crypto.createHash('sha256').update(googlePayload.email).digest('hex').slice(0, 8);
     console.log(`[auth] login attempt from user:${logId}`);
@@ -104,8 +118,8 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       select: { nim: true, name: true, email: true, role: true, isActive: true },
     });
 
-    if (!user) return redirectWithError(res, 'not_registered');
-    if (user.isActive === false) return redirectWithError(res, 'account_disabled');
+    if (!user) return redirectWithError(res, 'not_registered', frontendUrl);
+    if (user.isActive === false) return redirectWithError(res, 'account_disabled', frontendUrl);
 
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role, picture: googlePayload.picture };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
@@ -120,11 +134,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       ...(process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost' ? { domain: process.env.COOKIE_DOMAIN } : {})
     });
 
-    res.redirect(`${FRONTEND_URL}/auth/callback?success=true`);
+    res.redirect(`${frontendUrl}/auth/callback?success=true`);
 
   } catch (err) {
     console.error('[auth] callback error:', err);
-    redirectWithError(res, 'oauth_failed');
+    redirectWithError(res, 'oauth_failed', frontendUrl);
   }
 });
 

@@ -19,9 +19,25 @@ const app    = express();
 const server = http.createServer(app);
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const allowedOrigins = [CORS_ORIGIN, 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin || allowedOrigins.includes(origin) || /^http:\/\/localhost:\d+$/.test(origin) || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+};
 
 const io = new Server(server, {
-  cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST', 'DELETE', 'PATCH'], credentials: true },
+  cors: { 
+    origin: corsOptions.origin as any, 
+    methods: ['GET', 'POST', 'DELETE', 'PATCH'], 
+    credentials: true 
+  },
 });
 
 setActivityIo(io);
@@ -30,15 +46,17 @@ app.use(helmet({
   crossOriginOpenerPolicy: false,
   crossOriginResourcePolicy: false,
 }));
-app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
-// Rate limiting — HIGH-3 fix
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false });
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30,  standardHeaders: true, legacyHeaders: false });
-app.use('/api/', apiLimiter);
-app.use('/auth/', authLimiter);
+// Rate limiting — only in production to protect resources without hindering dev/testing
+if (process.env.NODE_ENV === 'production') {
+  const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false });
+  const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30,  standardHeaders: true, legacyHeaders: false });
+  app.use('/api/', apiLimiter);
+  app.use('/auth/', authLimiter);
+}
 
 app.use('/auth', authRouter);
 app.use('/', adminRouter);

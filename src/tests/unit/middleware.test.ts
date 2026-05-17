@@ -27,7 +27,7 @@ function makeNext(): NextFunction {
 
 describe('requireAuth', () => {
   it('returns 401 when no token cookie is present', () => {
-    const req  = { cookies: {} } as Request;
+    const req  = { headers: {} } as Request;
     const res  = makeRes();
     const next = makeNext();
 
@@ -42,7 +42,7 @@ describe('requireAuth', () => {
     const originalDomain = process.env.COOKIE_DOMAIN;
     process.env.COOKIE_DOMAIN = 'production.com';
     
-    const req  = { cookies: { token: 'definitely.not.valid' } } as unknown as Request;
+    const req  = { headers: { cookie: 'token=definitely.not.valid' } } as unknown as Request;
     const res  = makeRes();
     const next = makeNext();
 
@@ -63,7 +63,7 @@ describe('requireAuth', () => {
     const originalDomain = process.env.COOKIE_DOMAIN;
     process.env.COOKIE_DOMAIN = 'localhost';
     
-    const req  = { cookies: { token: 'definitely.not.valid' } } as unknown as Request;
+    const req  = { headers: { cookie: 'token=definitely.not.valid' } } as unknown as Request;
     const res  = makeRes();
     const next = makeNext();
 
@@ -80,7 +80,7 @@ describe('requireAuth', () => {
 
   it('returns 401 for a structurally valid JWT signed with the wrong secret', () => {
     const token = jwt.sign({ nim: 'M0001234567', name: 'X', email: 'x@y.com' }, 'WRONG_SECRET');
-    const req   = { cookies: { token } } as unknown as Request;
+    const req   = { headers: { cookie: `token=${token}` } } as unknown as Request;
     const res   = makeRes();
     const next  = makeNext();
 
@@ -93,9 +93,30 @@ describe('requireAuth', () => {
   it('populates req.user and calls next() for a valid token', () => {
     const payload = { nim: 'M0001234567', name: 'Test User', email: 'test@apps.ipb.ac.id' };
     const token   = jwt.sign(payload, JWT_SECRET);
-    const req     = { cookies: { token } } as unknown as Request;
+    const req     = { headers: { cookie: `token=${token}` } } as unknown as Request;
     const res     = makeRes();
     const next    = makeNext();
+
+    requireAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect((req as any).user).toMatchObject(payload);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('bypasses zombie duplicate cookies and authenticates if at least one valid token is present', () => {
+    const payload = { nim: 'M0001234567', name: 'Test User', email: 'test@apps.ipb.ac.id' };
+    const validToken = jwt.sign(payload, JWT_SECRET);
+    const invalidToken = 'definitely.not.valid.token';
+
+    // Simulate sending multiple token cookies (e.g. cookie-parser would normally fail)
+    const req = { 
+      headers: { 
+        cookie: `token=${invalidToken}; token=${validToken}` 
+      } 
+    } as unknown as Request;
+    const res = makeRes();
+    const next = makeNext();
 
     requireAuth(req, res, next);
 

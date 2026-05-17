@@ -18,8 +18,8 @@ declare global {
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = req.cookies?.token;
-  if (!token) {
+  const cookieHeader = req.headers?.cookie;
+  if (!cookieHeader) {
     res.clearCookie('token'); // Clear potential zombie host-only cookie
     res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
     if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
@@ -28,17 +28,39 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
-    next();
-  } catch {
+  // Extract all tokens sent by the browser to bypass zombie/duplicate cookie lockouts
+  const tokens = cookieHeader
+    .split(';')
+    .map(c => c.trim())
+    .filter(c => c.startsWith('token='))
+    .map(c => c.substring(6));
+
+  if (tokens.length === 0) {
     res.clearCookie('token'); // Clear potential zombie host-only cookie
     res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
     if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
       res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
     }
-    return res.status(401).json({ error: 'Session expired, please log in again' });
+    return res.status(401).json({ error: 'Not authenticated' });
   }
+
+  // Try verifying all provided tokens until we find a valid one
+  for (const token of tokens) {
+    try {
+      req.user = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
+      return next(); // Found a valid token, proceed
+    } catch {
+      continue; // This token is invalid/expired (a zombie), try the next one
+    }
+  }
+
+  // If we exhaust all tokens and none are valid, clear them and return 401
+  res.clearCookie('token'); // Clear potential zombie host-only cookie
+  res.clearCookie('token', { domain: 'localhost' }); // Aggressively kill the old ghost explicit-domain cookie
+  if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
+    res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
+  }
+  return res.status(401).json({ error: 'Session expired, please log in again' });
 }
 
 export function requireStudent(req: Request, res: Response, next: NextFunction) {

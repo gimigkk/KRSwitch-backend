@@ -43,7 +43,7 @@ export const barterMatchedAsTakerDataSchema = z.object({
   staleCancelledOffers: staleCancelledArray,
 });
 
-export const barterAutoMatchedDataSchema = z.object({
+const barterAutoMatchedDataSchema = z.object({
   offerId: z.number(),
   counterpartNim: z.string(),
   counterpartName: z.string(),
@@ -52,14 +52,61 @@ export const barterAutoMatchedDataSchema = z.object({
   staleCancelledOffers: staleCancelledArray,
 });
 
+export const barterCancelledDataSchema = z.object({
+  offerId: z.number(),
+  courseCode: z.string(),
+  classCode: z.string(),
+  reason: z.string().optional(),
+});
+
+export const adminEnrollmentUpdatedDataSchema = z.object({
+  courseCode: z.string(),
+  oldClassCode: z.string(),
+  newClassCode: z.string(),
+});
+
+export const adminEnrollmentDeletedDataSchema = z.object({
+  courseCode: z.string(),
+  classCode: z.string(),
+});
+
+export const adminOverrideSwapDataSchema = z.object({
+  courseCode: z.string(),
+  counterpartNim: z.string(),
+  counterpartName: z.string(),
+  oldClassCode: z.string(),
+  newClassCode: z.string(),
+});
+
 // --- Types -------------------------------------------
 
 export type StaleCancelledOffer     = z.infer<typeof staleCancelledOfferSchema>;
 export type BarterMatchedAsOffererData = z.infer<typeof barterMatchedAsOffererDataSchema>;
 export type BarterMatchedAsTakerData   = z.infer<typeof barterMatchedAsTakerDataSchema>;
 export type BarterAutoMatchedData      = z.infer<typeof barterAutoMatchedDataSchema>;
-export type NotificationData = BarterMatchedAsOffererData | BarterMatchedAsTakerData | BarterAutoMatchedData;
-export type NotificationType = 'barter_matched_as_offerer' | 'barter_matched_as_taker' | 'barter_auto_matched';
+export type BarterCancelledData        = z.infer<typeof barterCancelledDataSchema>;
+export type AdminEnrollmentUpdatedData = z.infer<typeof adminEnrollmentUpdatedDataSchema>;
+export type AdminEnrollmentDeletedData = z.infer<typeof adminEnrollmentDeletedDataSchema>;
+export type AdminOverrideSwapData      = z.infer<typeof adminOverrideSwapDataSchema>;
+
+export type NotificationData = 
+  | BarterMatchedAsOffererData 
+  | BarterMatchedAsTakerData 
+  | BarterAutoMatchedData
+  | BarterCancelledData
+  | AdminEnrollmentUpdatedData
+  | AdminEnrollmentDeletedData
+  | AdminOverrideSwapData;
+
+export type NotificationType = 
+  | 'barter_matched_as_offerer' 
+  | 'barter_matched_as_taker' 
+  | 'barter_auto_matched'
+  | 'barter_cancelled'
+  | 'admin_barter_cancelled'
+  | 'admin_enrollment_updated'
+  | 'admin_enrollment_deleted'
+  | 'admin_override_swap';
 
 type ClassSchedule = { day: string; timeStart: string; timeEnd: string };
 export type EnrollmentWithClass = {

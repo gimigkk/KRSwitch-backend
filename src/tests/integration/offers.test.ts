@@ -390,11 +390,20 @@ describe('DELETE /api/offers/:id', () => {
     expect(res.body.error).toMatch(/cannot cancel matched offer/i);
   });
 
-  it('cancels the offer and emits offer-taken', async () => {
+  it('cancels the offer, emits offer-taken, and creates a notification', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      tx.barterOffer.update.mockResolvedValue({});
+      tx.notification.create.mockResolvedValue({ id: 10 });
+      return cb(tx);
+    });
+
     vi.mocked(prisma.barterOffer.findUnique).mockResolvedValue({
       id: 1, offererNim: OFFERER_NIM, status: 'open',
+      myClass: { courseCode: 'CS101', classCode: 'K01' }
     } as any);
-    vi.mocked(prisma.barterOffer.update).mockResolvedValue({} as any);
+
+    vi.mocked(prisma.notification.findFirst).mockResolvedValue({ id: 10 } as any);
 
     const res = await request(app)
       .delete('/api/offers/1')
@@ -403,5 +412,6 @@ describe('DELETE /api/offers/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.message).toMatch(/cancelled/i);
     expect(mockIo.emit).toHaveBeenCalledWith('offer-taken', { offerId: 1 });
+    expect(mockIo.to).toHaveBeenCalledWith(`user-${OFFERER_NIM}`);
   });
 });
