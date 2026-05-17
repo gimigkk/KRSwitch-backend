@@ -15,11 +15,12 @@ npm test -- --watch   # mode watch, auto re-run kalau ada perubahan file
 Kalau semua hijau, output-nya kira-kira begini:
 
 ```
-✓ src/tests/unit/autoMatch.test.ts        (6 tests)
-✓ src/tests/unit/middleware.test.ts       (9 tests)
-✓ src/tests/unit/offerController.test.ts (14 tests)
-✓ src/tests/integration/admin.test.ts    (16 tests)
-✓ src/tests/integration/offers.test.ts   (24 tests)
+✓ src/tests/unit/autoMatch.test.ts          (6 tests)
+✓ src/tests/unit/middleware.test.ts        (10 tests)
+✓ src/tests/unit/offerController.test.ts   (14 tests)
+✓ src/tests/integration/admin.test.ts      (16 tests)
+✓ src/tests/integration/offers.test.ts     (24 tests)
+✓ src/tests/integration/adminRoutes.test.ts(38 tests)
 ```
 
 ---
@@ -179,19 +180,50 @@ Logika matching: offer A cocok dengan offer B kalau `A.myClassId == B.wantedClas
 
 ### `integration/adminRoutes.test.ts`
 
-Test khusus untuk endpoint dashboard admin yang sangat kritikal (penambahan admin, import data, reset sistem).
+Test khusus untuk endpoint dashboard admin yang sangat kritikal (penambahan admin, import data, reset sistem). Total ada 38 tests di file ini yang dibagi menjadi 8 suite:
 
-**1. Admin RBAC Middleware (`requireAdmin`, `requireSuperAdmin`)**
+**1. Admin RBAC Middleware Protection**
 Memastikan bahwa user biasa (student) tidak bisa mengakses rute admin, dan admin biasa tidak bisa mengakses rute super_admin. Juga memastikan akun admin yang dinonaktifkan (`isActive === false`) akan ditolak masuk.
 
-**2. Master Data Management**
-Test untuk `POST /api/admin/users`, `PUT`, `DELETE`. Memastikan validasi email dan format nama berjalan, serta operasi delete benar-benar menghapus relasi (cascade).
+**2. Dashboard & Analytics**
+Test untuk `GET /api/admin/stats` dan `GET /api/admin/logs`. Memastikan dashboard bisa mengambil data agregasi dan riwayat aktivitas.
 
-**3. Batch Operations & Destructive Actions**
+**3. Master Data Management**
+Test untuk `POST /api/admin/users`, `PUT`, `DELETE`. Memastikan validasi email dan format nama berjalan, serta operasi delete benar-benar menghapus relasi.
+
+**4. Administrative Operations**
+Test operasi manual admin seperti:
+- `DELETE /api/admin/purge-offers`: Purge semua barter yang open dan memancarkan event socket.
+- `POST /api/admin/override-swap`: Memaksa swap dua mahasiswa terlepas dari status barternya.
+- `POST /api/admin/reset`: Fitur kill-switch yang butuh confirm token dan privilege super admin.
+
+**5. Super Admin Operations & Management Routes**
+Test CRUD akun admin (`/api/admin/admins`). Memastikan super admin tidak bisa mengubah role-nya sendiri atau menghapus dirinya sendiri dari sistem.
+
+**6. Course Management**
+Test CRUD untuk mata kuliah dan kelas paralel (`/api/admin/classes`). Memastikan format jam perkuliahan divalidasi dengan ketat.
+
+**7. Batch Operations & Destructive Actions**
 Sangat kritikal untuk mencegah data loss di production:
 - **Atomicity (`import-students`, `import-classes`):** Memastikan import file CSV dibungkus dalam `prisma.$transaction`. Jika ada error di tengah jalan, database kembali utuh.
 - **Master Files (`DELETE /api/admin/master-files/:type`):** Memastikan bahwa menghapus file CSV dari trash bin *hanya* menghapus file di direktori `storage/master/`, dan TIDAK MENGHAPUS database.
 - **Production Guard (`seed-random`):** Memastikan endpoint pengacak sistem tidak bisa dijalankan jika `NODE_ENV === 'production'`.
+
+---
+
+## Frontend E2E Testing (Cypress)
+
+Selain backend unit/integration tests, kita juga memiliki test End-to-End di frontend menggunakan Cypress (`KRSwitch-frontend/cypress/e2e/`).
+
+1. **`auth.cy.js`**: Menguji flow login, redirect OAuth, dan penolakan zombie cookie.
+2. **`admin-management.cy.js`**: Menjalankan robot browser untuk menguji interaksi nyata di dashboard admin (klik tabel, buka modal, dll).
+
+Untuk menjalankan:
+```bash
+cd KRSwitch-frontend
+npm run cypress:open # untuk visual mode
+npm run cypress:run  # untuk headless mode (CI/CD)
+```
 
 ---
 
