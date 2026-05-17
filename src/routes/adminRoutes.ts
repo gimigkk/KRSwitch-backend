@@ -29,6 +29,7 @@ const createAdminSchema = z.object({
 });
 
 const updateAdminSchema = z.object({
+  name:     z.string().min(1).max(100).optional(),
   role:     z.enum(['operator', 'super_admin']).optional(),
   isActive: z.boolean().optional(),
 });
@@ -951,15 +952,21 @@ router.post('/admins', requireAuth, requireSuperAdmin, validate(createAdminSchem
 
 router.put('/admins/:nim', requireAuth, requireSuperAdmin, validate(updateAdminSchema), asyncHandler(async (req: any, res: any) => {
   const { nim } = req.params;
-  const { role, isActive } = req.body;
+  const { name, role, isActive } = req.body;
   
   if ((req as any).user.nim === nim) {
-    return res.status(403).json({ error: 'Cannot modify your own admin account' });
+    if (role !== undefined || isActive !== undefined) {
+      return res.status(403).json({ error: 'Cannot modify your own admin account (role or status) to prevent lockout' });
+    }
   }
 
   const updated = await prisma.user.update({
     where: { nim },
-    data: { ...(role !== undefined && { role }), ...(isActive !== undefined && { isActive }) }
+    data: {
+      ...(name !== undefined && { name }),
+      ...(role !== undefined && { role }),
+      ...(isActive !== undefined && { isActive })
+    }
   });
 
   await logActivity('ADMIN_MODIFIED', (req as any).user.nim, `Modified admin ${updated.name} (Role: ${role}, Active: ${isActive})`);

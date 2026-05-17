@@ -31,7 +31,7 @@ const prisma = new PrismaClient({ adapter });
 // ─── ADMIN ACCOUNTS ──────────────────────────────────────────────────────────
 // Admins are inserted into the DB but excluded from student enrollment logic.
 const admins = [
-  { nim: 'ADMIN001', name: 'Gilang (Admin)', email: 'wafflegilang@gmail.com', role: 'admin' },
+  { nim: 'ADMIN001', name: 'Gilang (Admin)', email: 'wafflegilang@gmail.com', role: 'super_admin' },
 ];
 
 // ─── STUDENTS ─────────────────────────────────────────────────────────────────
@@ -194,54 +194,54 @@ const users = [
 const SCHEDULE_RAW = {
   Senin: [
     { course: 'KOM1221', name: 'Metode Kuantitatif', parallel: 'K1', ts: '08:00', te: '09:40' },
-    { course: 'KOM1221', name: 'Metode Kuantitatif', parallel: 'K2', ts: '10:00', te: '11:40' },
+    { course: 'KOM1221', name: 'Metode Kuantitatif', parallel: 'K2', ts: '08:00', te: '09:40' },
     { course: 'KOM1221', name: 'Metode Kuantitatif', parallel: 'P1', ts: '13:00', te: '15:00' },
     { course: 'KOM1221', name: 'Metode Kuantitatif', parallel: 'P2', ts: '13:00', te: '15:00' },
     { course: 'KOM1221', name: 'Metode Kuantitatif', parallel: 'P3', ts: '13:00', te: '15:00' },
-    { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K4', ts: '08:00', te: '09:40' },
   ],
   Selasa: [
+    { course: 'KOM120C', name: 'Pemrograman', parallel: 'K1', ts: '08:00', te: '09:40' },
     { course: 'KOM120C', name: 'Pemrograman', parallel: 'K2', ts: '08:00', te: '09:40' },
     { course: 'KOM120C', name: 'Pemrograman', parallel: 'K3', ts: '08:00', te: '09:40' },
-    { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K4', ts: '08:00', te: '09:40' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K1', ts: '08:00', te: '09:40' },
-    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'K2', ts: '10:00', te: '11:40' },
-    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'K3', ts: '10:00', te: '11:40' },
-    { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K1', ts: '10:00', te: '11:40' },
-    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'K1', ts: '13:00', te: '14:40' },
-    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'R2', ts: '13:00', te: '15:00' },
-    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'P3', ts: '13:00', te: '15:00' },
+    { course: 'KOM120C', name: 'Pemrograman', parallel: 'K4', ts: '08:00', te: '09:40' },
+    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P1', ts: '13:00', te: '15:00' },
+    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P2', ts: '13:00', te: '15:00' },
+    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P3', ts: '13:00', te: '15:00' },
+    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P4', ts: '13:00', te: '15:00' },
   ],
   Rabu: [
-    { course: 'KOM120C', name: 'Pemrograman', parallel: 'K1', ts: '08:00', te: '09:40' },
-    { course: 'KOM120C', name: 'Pemrograman', parallel: 'K4', ts: '08:00', te: '09:40' },
+    { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K1', ts: '08:00', te: '09:40' },
+    { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K2', ts: '08:00', te: '09:40' },
     { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K3', ts: '08:00', te: '09:40' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K2', ts: '08:00', te: '09:40' },
-    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P2', ts: '08:00', te: '10:00' },
-    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P3', ts: '08:00', te: '10:00' },
-    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P1', ts: '10:00', te: '12:00' },
-    { course: 'KOM120C', name: 'Pemrograman', parallel: 'P4', ts: '10:00', te: '12:00' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P2', ts: '10:00', te: '12:00' },
-    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'K3', ts: '13:00', te: '14:40' },
-    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'K1', ts: '13:00', te: '14:40' },
+    { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K4', ts: '08:00', te: '09:40' },
+    { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K1', ts: '13:00', te: '14:40' },
     { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K2', ts: '13:00', te: '14:40' },
+    { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K3', ts: '13:00', te: '14:40' },
+    { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K4', ts: '13:00', te: '14:40' },
   ],
   Kamis: [
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P1', ts: '08:00', te: '10:00' },
-    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'K2', ts: '10:00', te: '11:40' },
-    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'R3', ts: '10:00', te: '12:00' },
-    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'P1', ts: '10:00', te: '12:00' },
-    { course: 'KOM1304', name: 'Grafika Komputer dan Visualisasi', parallel: 'K3', ts: '13:00', te: '14:40' },
-    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'R1', ts: '13:00', te: '15:00' },
-    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'P2', ts: '13:00', te: '15:00' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K1', ts: '08:00', te: '09:40' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K2', ts: '08:00', te: '09:40' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K3', ts: '08:00', te: '09:40' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K4', ts: '08:00', te: '09:40' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P1', ts: '13:00', te: '15:00' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P2', ts: '13:00', te: '15:00' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P3', ts: '13:00', te: '15:00' },
+    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P4', ts: '13:00', te: '15:00' },
   ],
   Jumat: [
-    { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K1', ts: '09:00', te: '10:40' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K3', ts: '09:00', te: '10:40' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'K4', ts: '09:00', te: '10:40' },
-    { course: 'KOM120G', name: 'Organisasi dan Arsitektur Komputer', parallel: 'K2', ts: '13:30', te: '15:10' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P3', ts: '13:30', te: '15:30' },
-    { course: 'KOM120H', name: 'Struktur Data', parallel: 'P4', ts: '13:30', te: '15:30' },
+    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'K1', ts: '08:00', te: '09:40' },
+    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'K2', ts: '08:00', te: '09:40' },
+    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'K3', ts: '08:00', te: '09:40' },
+    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'K1', ts: '10:00', te: '11:40' },
+    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'K2', ts: '10:00', te: '11:40' },
+    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'K3', ts: '10:00', te: '11:40' },
+    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'R1', ts: '13:00', te: '15:00' },
+    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'R2', ts: '13:00', te: '15:00' },
+    { course: 'KOM1231', name: 'Rekayasa Perangkat Lunak', parallel: 'R3', ts: '13:00', te: '15:00' },
+    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'P1', ts: '15:30', te: '17:30' },
+    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'P2', ts: '15:30', te: '17:30' },
+    { course: 'KOM1232', name: 'Desain Pengalaman Pengguna', parallel: 'P3', ts: '15:30', te: '17:30' },
   ],
 };
 
@@ -507,10 +507,19 @@ async function main() {
   await prisma.barterOffer.deleteMany({});
   await prisma.enrollment.deleteMany({});
   await prisma.parallelClass.deleteMany({});
-  await prisma.user.deleteMany({});
+  
+  // Clean only students and the default seeded developer admin (leaving custom admins untouched)
+  await prisma.user.deleteMany({
+    where: {
+      OR: [
+        { role: 'student' },
+        { nim: 'ADMIN001' }
+      ]
+    }
+  });
 
   console.log('Inserting...');
-  await prisma.user.createMany({ data: [...admins, ...users] });
+  await prisma.user.createMany({ data: [...admins, ...users], skipDuplicates: true });
 
   // Strip in-memory-only fields before DB insert
   const dbClasses = allClasses.map(({ classType: _t, classNum: _n, ...rest }) => rest);
@@ -543,6 +552,26 @@ async function main() {
     });
   }
   if (notifications.length) await prisma.notification.createMany({ data: notifications });
+
+  // Auto-generate mock CSV files in mock_data directory
+  const fs = require('fs');
+  const path = require('path');
+  const mockDataDir = path.join(__dirname, 'mock_data');
+  if (!fs.existsSync(mockDataDir)) {
+    fs.mkdirSync(mockDataDir, { recursive: true });
+  }
+
+  // 1. Write mock_students.csv
+  const studentHeader = 'nim,name,email\n';
+  const studentRows = users.map(u => `${u.nim},${u.name},${u.email}`).join('\n');
+  fs.writeFileSync(path.join(mockDataDir, 'mock_students.csv'), studentHeader + studentRows + '\n');
+  console.log('✓ Automatically updated mock_students.csv');
+
+  // 2. Write mock_classes.csv
+  const classHeader = 'courseCode,courseName,classCode,day,timeStart,timeEnd,room\n';
+  const classRows = allClasses.map(c => `${c.courseCode},${c.courseName},${c.classCode},${c.day},${c.timeStart},${c.timeEnd},${c.room}`).join('\n');
+  fs.writeFileSync(path.join(mockDataDir, 'mock_classes.csv'), classHeader + classRows + '\n');
+  console.log('✓ Automatically updated mock_classes.csv');
 
   console.log('✓ Seed complete.');
 }

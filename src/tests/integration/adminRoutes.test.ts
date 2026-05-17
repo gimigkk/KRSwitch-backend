@@ -583,16 +583,39 @@ describe('Super Admin Management Routes', () => {
     }));
   });
 
-  it('PUT /api/admin/admins/:nim prevents self-modification', async () => {
+  it('PUT /api/admin/admins/:nim prevents self role/status modification but allows self name modification', async () => {
     mockActiveUser(superAdminUser);
+    vi.mocked(prisma.user.update).mockResolvedValue({ nim: superAdminUser.nim, name: 'New Super Name', role: 'super_admin', isActive: true } as any);
 
-    const res = await request(app)
+    // 1. Role modification (should be blocked)
+    const resRole = await request(app)
       .put(`/api/admin/admins/${superAdminUser.nim}`)
       .set('Cookie', authCookie(superAdminUser))
       .send({ role: 'operator' });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/Cannot modify your own admin account/);
+    expect(resRole.status).toBe(403);
+    expect(resRole.body.error).toMatch(/Cannot modify your own admin account/);
+
+    // 2. Status modification (should be blocked)
+    const resStatus = await request(app)
+      .put(`/api/admin/admins/${superAdminUser.nim}`)
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ isActive: false });
+
+    expect(resStatus.status).toBe(403);
+    expect(resStatus.body.error).toMatch(/Cannot modify your own admin account/);
+
+    // 3. Name modification (should be allowed)
+    const resName = await request(app)
+      .put(`/api/admin/admins/${superAdminUser.nim}`)
+      .set('Cookie', authCookie(superAdminUser))
+      .send({ name: 'New Super Name' });
+
+    expect(resName.status).toBe(200);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { nim: superAdminUser.nim },
+      data: { name: 'New Super Name' }
+    });
   });
 
   it('DELETE /api/admin/admins/:nim prevents self-deletion', async () => {

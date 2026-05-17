@@ -1,11 +1,42 @@
 courseCode,courseName,classCode,day,timeStart,timeEnd,room
-KOM101,Dasar Pemrograman,K1,1,08:00,09:40,Ruang 201
-KOM101,Dasar Pemrograman,K2,1,10:00,11:40,Ruang 201
-KOM101,Dasar Pemrograman,P1,2,13:00,15:00,Lab Kom 1
-KOM101,Dasar Pemrograman,P2,2,15:00,17:00,Lab Kom 1
-KOM102,Struktur Data,K1,3,08:00,09:40,Ruang 202
-KOM102,Struktur Data,K2,3,10:00,11:40,Ruang 202
-KOM102,Struktur Data,P1,4,13:00,15:00,Lab Kom 2
-KOM102,Struktur Data,P2,4,15:00,17:00,Lab Kom 2
-KOM103,Basis Data,K1,5,08:00,09:40,Ruang 203
-KOM103,Basis Data,P1,5,13:00,15:00,Lab Kom 3
+KOM1221,Metode Kuantitatif,K1,Senin,08:00,09:40,Ruang KOM1221-K1
+KOM1221,Metode Kuantitatif,K2,Senin,08:00,09:40,Ruang KOM1221-K2
+KOM1221,Metode Kuantitatif,P1,Senin,13:00,15:00,Ruang KOM1221-P1
+KOM1221,Metode Kuantitatif,P2,Senin,13:00,15:00,Ruang KOM1221-P2
+KOM1221,Metode Kuantitatif,P3,Senin,13:00,15:00,Ruang KOM1221-P3
+KOM120C,Pemrograman,K1,Selasa,08:00,09:40,Ruang KOM120C-K1
+KOM120C,Pemrograman,K2,Selasa,08:00,09:40,Ruang KOM120C-K2
+KOM120C,Pemrograman,K3,Selasa,08:00,09:40,Ruang KOM120C-K3
+KOM120C,Pemrograman,K4,Selasa,08:00,09:40,Ruang KOM120C-K4
+KOM120C,Pemrograman,P1,Selasa,13:00,15:00,Ruang KOM120C-P1
+KOM120C,Pemrograman,P2,Selasa,13:00,15:00,Ruang KOM120C-P2
+KOM120C,Pemrograman,P3,Selasa,13:00,15:00,Ruang KOM120C-P3
+KOM120C,Pemrograman,P4,Selasa,13:00,15:00,Ruang KOM120C-P4
+KOM120G,Organisasi dan Arsitektur Komputer,K1,Rabu,08:00,09:40,Ruang KOM120G-K1
+KOM120G,Organisasi dan Arsitektur Komputer,K2,Rabu,08:00,09:40,Ruang KOM120G-K2
+KOM120G,Organisasi dan Arsitektur Komputer,K3,Rabu,08:00,09:40,Ruang KOM120G-K3
+KOM120G,Organisasi dan Arsitektur Komputer,K4,Rabu,08:00,09:40,Ruang KOM120G-K4
+KOM1304,Grafika Komputer dan Visualisasi,K1,Rabu,13:00,14:40,Ruang KOM1304-K1
+KOM1304,Grafika Komputer dan Visualisasi,K2,Rabu,13:00,14:40,Ruang KOM1304-K2
+KOM1304,Grafika Komputer dan Visualisasi,K3,Rabu,13:00,14:40,Ruang KOM1304-K3
+KOM1304,Grafika Komputer dan Visualisasi,K4,Rabu,13:00,14:40,Ruang KOM1304-K4
+KOM120H,Struktur Data,K1,Kamis,08:00,09:40,Ruang KOM120H-K1
+KOM120H,Struktur Data,K2,Kamis,08:00,09:40,Ruang KOM120H-K2
+KOM120H,Struktur Data,K3,Kamis,08:00,09:40,Ruang KOM120H-K3
+KOM120H,Struktur Data,K4,Kamis,08:00,09:40,Ruang KOM120H-K4
+KOM120H,Struktur Data,P1,Kamis,13:00,15:00,Ruang KOM120H-P1
+KOM120H,Struktur Data,P2,Kamis,13:00,15:00,Ruang KOM120H-P2
+KOM120H,Struktur Data,P3,Kamis,13:00,15:00,Ruang KOM120H-P3
+KOM120H,Struktur Data,P4,Kamis,13:00,15:00,Ruang KOM120H-P4
+KOM1231,Rekayasa Perangkat Lunak,K1,Jumat,08:00,09:40,Ruang KOM1231-K1
+KOM1231,Rekayasa Perangkat Lunak,K2,Jumat,08:00,09:40,Ruang KOM1231-K2
+KOM1231,Rekayasa Perangkat Lunak,K3,Jumat,08:00,09:40,Ruang KOM1231-K3
+KOM1232,Desain Pengalaman Pengguna,K1,Jumat,10:00,11:40,Ruang KOM1232-K1
+KOM1232,Desain Pengalaman Pengguna,K2,Jumat,10:00,11:40,Ruang KOM1232-K2
+KOM1232,Desain Pengalaman Pengguna,K3,Jumat,10:00,11:40,Ruang KOM1232-K3
+KOM1231,Rekayasa Perangkat Lunak,R1,Jumat,13:00,15:00,Ruang KOM1231-R1
+KOM1231,Rekayasa Perangkat Lunak,R2,Jumat,13:00,15:00,Ruang KOM1231-R2
+KOM1231,Rekayasa Perangkat Lunak,R3,Jumat,13:00,15:00,Ruang KOM1231-R3
+KOM1232,Desain Pengalaman Pengguna,P1,Jumat,15:30,17:30,Ruang KOM1232-P1
+KOM1232,Desain Pengalaman Pengguna,P2,Jumat,15:30,17:30,Ruang KOM1232-P2
+KOM1232,Desain Pengalaman Pengguna,P3,Jumat,15:30,17:30,Ruang KOM1232-P3
