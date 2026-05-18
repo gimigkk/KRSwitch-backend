@@ -213,6 +213,92 @@ describe('Master Data Management', () => {
     
     expect(res.status).toBe(400);
   });
+
+  it('PUT /api/admin/users/:oldNim updates student details including email', async () => {
+    mockActiveUser(operatorUser);
+    const mockStudent = { nim: 'M123', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
+    
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requireAdmin isActive check
+      .mockResolvedValueOnce(mockStudent as any) // existence check in route
+      .mockResolvedValueOnce(null); // nimExists check
+
+    vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null); // email exists check
+
+    const updatedStudent = { nim: 'M123NEW', name: 'New Name', email: 'new@ipb.ac.id', role: 'student' };
+    vi.mocked(prisma.user.update).mockResolvedValueOnce(updatedStudent as any);
+
+    const res = await request(app)
+      .put('/api/admin/users/M123')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ newNim: 'M123NEW', newName: 'New Name', newEmail: 'new@ipb.ac.id' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.nim).toBe('M123NEW');
+    expect(res.body.email).toBe('new@ipb.ac.id');
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { nim: 'M123' },
+      data: {
+        nim: 'M123NEW',
+        name: 'New Name',
+        email: 'new@ipb.ac.id'
+      }
+    });
+  });
+
+  it('PUT /api/admin/users/:oldNim returns 400 for invalid email format', async () => {
+    mockActiveUser(operatorUser);
+    const mockStudent = { nim: 'M123', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
+
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requireAdmin isActive check
+      .mockResolvedValueOnce(mockStudent as any); // existence check in route
+
+    const res = await request(app)
+      .put('/api/admin/users/M123')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ newEmail: 'not-an-email' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Format email tidak valid/i);
+  });
+
+  it('PUT /api/admin/users/:oldNim returns 400 if email is already taken', async () => {
+    mockActiveUser(operatorUser);
+    const mockStudent = { nim: 'M123', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
+
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requireAdmin isActive check
+      .mockResolvedValueOnce(mockStudent as any); // existence check in route
+
+    vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ nim: 'M999', email: 'new@ipb.ac.id' } as any); // email exists check
+
+    const res = await request(app)
+      .put('/api/admin/users/M123')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ newEmail: 'new@ipb.ac.id' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Email sudah terdaftar/i);
+  });
+
+  it('PUT /api/admin/users/:oldNim returns 400 if NIM is already taken', async () => {
+    mockActiveUser(operatorUser);
+    const mockStudent = { nim: 'M123', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
+
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requireAdmin isActive check
+      .mockResolvedValueOnce(mockStudent as any) // existence check in route
+      .mockResolvedValueOnce({ nim: 'M123NEW', name: 'Other Student' } as any); // nimExists check
+
+    const res = await request(app)
+      .put('/api/admin/users/M123')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ newNim: 'M123NEW' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/NIM sudah terdaftar/i);
+  });
 });
 
 // ─── Administrative Operations ────────────────────────────────────────────────

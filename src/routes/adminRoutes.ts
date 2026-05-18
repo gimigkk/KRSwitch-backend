@@ -654,16 +654,44 @@ router.post('/users', requireAuth, requireAdmin, validate(createUserSchema), asy
 // PUT /api/admin/users/:oldNim
 router.put('/users/:oldNim', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
   const { oldNim } = req.params;
-  const { newNim, newName } = req.body;
+  const { newNim, newName, newEmail } = req.body;
 
   const existing = await prisma.user.findUnique({ where: { nim: oldNim } });
   if (!existing) return res.status(404).json({ error: 'Mahasiswa tidak ditemukan' });
+
+  // check if new NIM already exists (if it changed)
+  if (newNim && newNim.toUpperCase().trim() !== oldNim.toUpperCase().trim()) {
+    const nimExists = await prisma.user.findUnique({
+      where: { nim: newNim.toUpperCase().trim() }
+    });
+    if (nimExists) {
+      return res.status(400).json({ error: 'NIM sudah terdaftar di sistem' });
+    }
+  }
+
+  // check if new Email already exists (if it changed/provided)
+  if (newEmail) {
+    const emailStr = String(newEmail).toLowerCase().trim();
+    if (!z.string().email().safeParse(emailStr).success) {
+      return res.status(400).json({ error: 'Format email tidak valid' });
+    }
+    const emailExists = await prisma.user.findFirst({
+      where: { 
+        email: emailStr,
+        nim: { not: oldNim }
+      }
+    });
+    if (emailExists) {
+      return res.status(400).json({ error: 'Email sudah terdaftar di sistem' });
+    }
+  }
 
   const updated = await prisma.user.update({
     where: { nim: oldNim },
     data: {
       ...(newNim ? { nim: String(newNim).toUpperCase().trim() } : {}),
       ...(newName ? { name: String(newName).trim() } : {}),
+      ...(newEmail ? { email: String(newEmail).toLowerCase().trim() } : {}),
     },
   });
 
