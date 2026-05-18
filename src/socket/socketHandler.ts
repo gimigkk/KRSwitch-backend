@@ -2,17 +2,19 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { AuthUser } from '../middleware/authMiddleware';
 
-let onlineUsers = 0;
+// Set untuk menyimpan NIM pengguna unik yang sedang online dan terautentikasi.
+// Menggunakan Set alih-alih counter sederhana untuk mendukung koneksi multi-device/multi-tab secara mulus.
+const activeNims = new Set<string>();
 
-export function getOnlineCount() {
-  return onlineUsers;
+export function getOnlineCount(): number {
+  return activeNims.size;
 }
 
 export function setupSocket(io: Server) {
   io.on('connection', (socket) => {
     console.log(`[Socket] New connection attempt, socket ID: ${socket.id}, transport: ${socket.conn.transport.name}`);
 
-    // Perbaikan HIGH-6: koneksi tanpa auth dikasih waktu 10 detik buat authenticate (50ms di test env)
+    // Batasan waktu koneksi tanpa autentikasi (10 detik di prod, 50ms di test env)
     const timeoutLimit = process.env.NODE_ENV === 'test' ? 50 : 10_000;
     const authTimeout = setTimeout(() => {
       if (!socket.data.nim) {
@@ -30,13 +32,16 @@ export function setupSocket(io: Server) {
       try {
         console.log(`[Socket] Authenticating socket ID: ${socket.id}...`);
         const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
+        
         socket.join(`user-${payload.nim}`);
         socket.data.nim = payload.nim;
         clearTimeout(authTimeout);
-        // Hanya hitung user yang terautentikasi
-        onlineUsers++;
-        console.log(`[Socket] Authentication SUCCESS for user ${payload.email} (socket: ${socket.id}). Online count: ${onlineUsers}`);
-        io.emit('online-count', onlineUsers);
+
+        // Tambahkan ke Set unik pengguna online
+        activeNims.add(payload.nim);
+        
+        console.log(`[Socket] Authentication SUCCESS for user ${payload.email} (socket: ${socket.id}). Unique online count: ${activeNims.size}`);
+        io.emit('online-count', activeNims.size);
       } catch (err: any) {
         console.error(`[Socket] Authentication FAILED for socket ID: ${socket.id}. Error:`, err.message);
         socket.emit('auth-error', { error: 'Invalid or expired socket token' });
@@ -47,10 +52,22 @@ export function setupSocket(io: Server) {
     socket.on('disconnect', (reason) => {
       console.log(`[Socket] Socket ID ${socket.id} disconnected. Reason: ${reason}`);
       if (socket.data.nim) {
-        // Hanya kurangi hitungan untuk user yang terautentikasi
-        onlineUsers = Math.max(0, onlineUsers - 1);
-        console.log(`[Socket] Authenticated user disconnected. New online count: ${onlineUsers}`);
-        io.emit('online-count', onlineUsers);
+        const userNim = socket.data.nim;
+        
+        // Periksa apakah masih ada socket/tab lain yang aktif untuk NIM ini di dalam room 'user-${nim}'
+        const activeSocketsInRoom = io.sockets.adapter.rooms.get(`user-${userNim}`);
+        
+        // Socket.IO memicu event 'disconnect' SETELAH socket meninggalkan room-nya.
+        // Jika size room adalah 0 (atau undefined), artinya ini adalah koneksi/tab terakhir milik user tersebut yang ditutup.
+        if (!activeSocketsInRoom || activeSocketsInRoom.size === 0) {
+          activeNims.delete(userNim);
+          console.log(`[Socket] Last connection for user ${userNim} disconnected. Removed from online users.`);
+        } else {
+          console.log(`[Socket] User ${userNim} still has ${activeSocketsInRoom.size} active connection(s) open on other devices.`);
+        }
+
+        console.log(`[Socket] Online count broadcasted: ${activeNims.size}`);
+        io.emit('online-count', activeNims.size);
       }
       clearTimeout(authTimeout);
     });
@@ -70,4 +87,6 @@ export function disconnectUserSockets(io: Server, nim: string, reasonMessage: st
       }
     }
   }
+  // Hapus instan dari online set jika terputus paksa
+  activeNims.delete(nim);
 }

@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { AddressInfo } from 'net';
 import { Server } from 'socket.io';
 import { io as ioc, Socket as ClientSocket } from 'socket.io-client';
-import { setupSocket, disconnectUserSockets } from '../../socket/socketHandler';
+import { setupSocket, disconnectUserSockets, getOnlineCount } from '../../socket/socketHandler';
 import jwt from 'jsonwebtoken';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -236,5 +236,36 @@ describe('Socket.IO Handler Concurrency & Event Testing', () => {
 
     expect(errorReceived).toEqual({ error: 'Your account has been deleted.' });
     expect(wasDisconnected).toBe(true);
+  });
+
+  it('supports multiple active devices/connections for a single user without breaking the online count', async () => {
+    // Device 1 connects and authenticates
+    const device1 = await createClient();
+    const token = signToken();
+    device1.emit('authenticate', token);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getOnlineCount()).toBe(1);
+
+    // Device 2 connects and authenticates for the SAME user
+    const device2 = await createClient();
+    device2.emit('authenticate', token);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    
+    // Unique online count should remain 1 because it is the same user!
+    expect(getOnlineCount()).toBe(1);
+
+    // Device 1 disconnects (e.g. closes tab)
+    device1.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    
+    // Unique online count should STILL be 1 because Device 2 is still active!
+    expect(getOnlineCount()).toBe(1);
+
+    // Device 2 disconnects
+    device2.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Now the unique online count should drop to 0!
+    expect(getOnlineCount()).toBe(0);
   });
 });
