@@ -133,7 +133,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
   console.log('[google/callback] Cleared oauth_ctx cookie');
 
   if (!returnedState || returnedState !== oauthCtx.state) {
-    console.error('[google/callback] Validation failed: state mismatch. Returned:', returnedState, 'Expected:', oauthCtx?.state);
+    console.error('[google/callback] Validation failed: state mismatch');
     return redirectWithError(res, 'oauth_failed', frontendUrl);
   }
 
@@ -192,7 +192,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     console.log('[google/callback] Successfully set new session cookie');
 
     const redirectUrl = `${frontendUrl}/auth/callback?success=true`;
-    console.log('[google/callback] Redirecting popup to:', redirectUrl);
+    console.log('[google/callback] Redirecting popup to success callback');
     res.redirect(redirectUrl);
 
   } catch (err) {

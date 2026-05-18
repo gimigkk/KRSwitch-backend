@@ -14,7 +14,7 @@ import adminApiRouter from './routes/adminRoutes';
 import { createOffersRouter } from './routes/offers';
 import { setupSocket } from './socket/socketHandler';
 import { setActivityIo } from './utils/activity';
-import { csrfProtection } from './middleware/csrf';
+import { doubleCsrfProtection, trustedOriginBypass } from './middleware/csrf';
 
 const app    = express();
 app.set('trust proxy', 1);
@@ -57,7 +57,8 @@ const apiLimiter  = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 200  : 1
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 30   : 100,  standardHeaders: true, legacyHeaders: false });
 app.use('/api/', apiLimiter);
 app.use('/auth/', authLimiter);
-app.use(csrfProtection);
+app.use(trustedOriginBypass);
+app.use(doubleCsrfProtection);
 
 
 app.use('/auth', authRouter);
