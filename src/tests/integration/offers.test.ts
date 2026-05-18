@@ -40,11 +40,11 @@ beforeEach(async () => {
 
   vi.mocked(prisma.user.findUnique).mockResolvedValue({ isActive: true } as any);
 
+  vi.mocked(prisma.barterOffer.findFirst).mockResolvedValue(null);
+
   // Default $transaction: autoMatch nggak nemu counter-offer, langsung return matched: false
   vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
-    const tx = buildTxMock();
-    tx.barterOffer.findFirst.mockResolvedValue(null);
-    return cb(tx);
+    return cb(prisma);
   });
 
   app = await createTestApp();
@@ -208,6 +208,29 @@ describe('POST /api/offers', () => {
     expect(res.body.autoMatched).toBe(false);
     expect(mockIo.emit).toHaveBeenCalledWith('new-offer', createdOffer);
   });
+
+  it('returns 400 when offerer is already enrolled in the wanted class', async () => {
+    const existingEnrollment = {
+      nim: OFFERER_NIM,
+      parallelClassId: classB.id,
+      parallelClass: classB,
+    };
+
+    vi.mocked(prisma.enrollment.findFirst).mockResolvedValue({ nim: OFFERER_NIM } as any);
+    vi.mocked(prisma.barterOffer.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.parallelClass.findUnique)
+      .mockResolvedValueOnce(classA as any)
+      .mockResolvedValueOnce(classB as any);
+    vi.mocked(prisma.enrollment.findMany).mockResolvedValue([existingEnrollment] as any);
+
+    const res = await request(app)
+      .post('/api/offers')
+      .set('Cookie', authCookie())
+      .send(validBody);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/jadwal bentrok/i);
+  });
 });
 
 // --- POST /api/offers/:id/take ---
@@ -315,6 +338,71 @@ describe('POST /api/offers/:id/take', () => {
     expect(res.body.error).toMatch(/not enrolled in the wanted class/i);
   });
 
+  it('returns 500 when taking the offer causes a schedule conflict for the taker', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      const offer = { id: 1, status: 'open', offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, myClass: classA, wantedClass: classB, offerer: offererUser };
+
+      tx.barterOffer.findUnique.mockResolvedValue(offer as any);
+      tx.enrollment.findFirst
+        .mockResolvedValueOnce({ nim: OFFERER_NIM, parallelClassId: classA.id })
+        .mockResolvedValueOnce({ nim: TAKER_NIM,   parallelClassId: classB.id });
+      tx.user.findUnique.mockResolvedValue(takerUser as any);
+      
+      const conflictingClass = { id: 30, courseCode: 'MATH200', classCode: 'K01', day: 'Monday', timeStart: '08:30', timeEnd: '10:30' };
+      tx.enrollment.findMany.mockResolvedValueOnce([{ parallelClass: conflictingClass }] as any); // takerOtherEnrollments
+      tx.enrollment.findMany.mockResolvedValueOnce([]); // offererOtherEnrollments
+
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/1/take')
+      .set('Cookie', authCookie())
+      .send(validBody);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/jadwal bentrok/i);
+  });
+
+  it('completes the barter, auto-cancels dangling stale offers, and emits socket events', async () => {
+    const offererStaleOpenOffers = [
+      { id: 99, offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, status: 'open', wantedClass: classB, myClass: classA },
+    ];
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      const offer = { id: 1, status: 'open', offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, myClass: classA, wantedClass: classB, offerer: offererUser };
+
+      tx.barterOffer.findUnique.mockResolvedValue(offer as any);
+      tx.enrollment.findFirst
+        .mockResolvedValueOnce({ nim: OFFERER_NIM, parallelClassId: classA.id })
+        .mockResolvedValueOnce({ nim: TAKER_NIM,   parallelClassId: classB.id });
+      tx.user.findUnique.mockResolvedValue(takerUser as any);
+      tx.enrollment.findMany.mockResolvedValue([]);
+      tx.barterOffer.update.mockResolvedValue({});
+      tx.enrollment.updateMany.mockResolvedValue({});
+      
+      tx.barterOffer.findMany.mockResolvedValueOnce(offererStaleOpenOffers as any); // offerer stale offers
+      tx.barterOffer.findMany.mockResolvedValueOnce([]); // taker stale offers
+
+      tx.notification.create.mockResolvedValue({ id: 10 });
+
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/1/take')
+      .set('Cookie', authCookie())
+      .send(validBody);
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/barter completed/i);
+    expect(mockIo.emit).toHaveBeenCalledWith('offer-taken', expect.objectContaining({ offerId: 1 }));
+    expect(mockIo.emit).toHaveBeenCalledWith('offer-taken', expect.objectContaining({ offerId: 99 }));
+    expect(mockIo.to).toHaveBeenCalledWith(`user-${OFFERER_NIM}`);
+  });
+
   it('completes the barter, swaps enrollments, and emits socket events', async () => {
     vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
       const tx = buildTxMock();
@@ -415,5 +503,94 @@ describe('DELETE /api/offers/:id', () => {
     expect(res.body.message).toMatch(/cancelled/i);
     expect(mockIo.emit).toHaveBeenCalledWith('offer-taken', { offerId: 1 });
     expect(mockIo.to).toHaveBeenCalledWith(`user-${OFFERER_NIM}`);
+  });
+});
+
+describe('High-Concurrency and Race Condition Hardening Tests', () => {
+  it('prevents concurrent takes of the same offer (race condition)', async () => {
+    let callCount = 0;
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      const offer = { id: 1, status: 'open', offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, myClass: classA, wantedClass: classB, offerer: offererUser };
+
+      tx.barterOffer.findUnique.mockResolvedValue(offer as any);
+      tx.enrollment.findFirst
+        .mockResolvedValueOnce({ nim: OFFERER_NIM, parallelClassId: classA.id })
+        .mockResolvedValueOnce({ nim: TAKER_NIM,   parallelClassId: classB.id });
+      tx.user.findUnique.mockResolvedValue(takerUser as any);
+      tx.enrollment.findMany.mockResolvedValue([]);
+      tx.enrollment.updateMany.mockResolvedValue({});
+      tx.barterOffer.findMany.mockResolvedValue([]);
+      tx.notification.create.mockResolvedValue({ id: 10 });
+
+      // First call succeeds (count: 1), second call fails (count: 0) to simulate concurrent lock acquisition
+      tx.barterOffer.updateMany.mockImplementation(async () => {
+        callCount++;
+        return { count: callCount === 1 ? 1 : 0 };
+      });
+
+      return cb(tx);
+    });
+
+    const validTakeBody = { takerNim: TAKER_NIM };
+
+    const [res1, res2] = await Promise.all([
+      request(app).post('/api/offers/1/take').set('Cookie', authCookie()).send(validTakeBody),
+      request(app).post('/api/offers/1/take').set('Cookie', authCookie()).send(validTakeBody),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([200, 500]);
+
+    const errors = [res1.body.error, res2.body.error];
+    expect(errors).toContain('Offer already taken or matched concurrently by another user');
+  });
+
+  it('prevents duplicate open offer creation from user spamming (double-click lock)', async () => {
+    let callCount = 0;
+    const createdOffer = { id: 1, offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, status: 'open' };
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      
+      tx.enrollment.findFirst.mockResolvedValue({ nim: OFFERER_NIM } as any);
+      
+      // Simulate transaction serialization: first check finds nothing, second check finds the duplicate created by first transaction
+      tx.barterOffer.findFirst.mockImplementation(async () => {
+        callCount++;
+        return callCount === 1 ? null : createdOffer;
+      });
+
+      // Dynamic parallel class mock lookup depending on the queried ID
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        return where.id === classA.id ? classA : classB;
+      });
+      
+      tx.enrollment.findMany.mockResolvedValue([]);
+      tx.barterOffer.create.mockResolvedValue(createdOffer as any);
+
+      return cb(tx);
+    });
+
+    // Mock prisma.parallelClass.findUnique for the outer scope call
+    vi.mocked(prisma.parallelClass.findUnique)
+      .mockResolvedValueOnce(classA as any)
+      .mockResolvedValueOnce(classB as any)
+      .mockResolvedValueOnce(classA as any)
+      .mockResolvedValueOnce(classB as any);
+
+    const validCreateBody = { myClassId: classA.id, wantedClassId: classB.id };
+
+    const [res1, res2] = await Promise.all([
+      request(app).post('/api/offers').set('Cookie', authCookie()).send(validCreateBody),
+      request(app).post('/api/offers').set('Cookie', authCookie()).send(validCreateBody),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 400]);
+
+    const errors = [res1.body.error, res2.body.error];
+    expect(errors).toContain('You already have an open offer for this class');
   });
 });

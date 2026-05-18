@@ -11,13 +11,13 @@ import { requireAuth, clearAllAuthCookies } from '../middleware/authMiddleware';
 import { asyncHandler, validate } from '../middleware/helpers';
 import { logActivity } from '../utils/activity';
 import { prisma } from '../prisma/db';
-import { getOnlineCount } from '../socket/socketHandler';
+import { getOnlineCount, disconnectUserSockets } from '../socket/socketHandler';
 import { randomizeEnrollments } from '../utils/seeding';
 import { createNotification } from '../controllers/offerController';
 
 // --- Zod Validation Schemas ---------------------------------------------
 const createUserSchema = z.object({
-  nim:   z.string().min(1).max(30),
+  nim:   z.string().regex(/^M\d{10}$/, { message: 'Format NIM harus diawali M diikuti 10 digit (contoh: M6401211064)' }),
   name:  z.string().min(1).max(100),
   email: z.string().email(),
 });
@@ -661,8 +661,12 @@ router.put('/users/:oldNim', requireAuth, requireAdmin, asyncHandler(async (req:
 
   // check if new NIM already exists (if it changed)
   if (newNim && newNim.toUpperCase().trim() !== oldNim.toUpperCase().trim()) {
+    const cleanNim = newNim.toUpperCase().trim();
+    if (!/^M\d{10}$/.test(cleanNim)) {
+      return res.status(400).json({ error: 'Format NIM harus diawali M diikuti 10 digit (contoh: M6401211064)' });
+    }
     const nimExists = await prisma.user.findUnique({
-      where: { nim: newNim.toUpperCase().trim() }
+      where: { nim: cleanNim }
     });
     if (nimExists) {
       return res.status(400).json({ error: 'NIM sudah terdaftar di sistem' });
@@ -696,6 +700,11 @@ router.put('/users/:oldNim', requireAuth, requireAdmin, asyncHandler(async (req:
   });
 
   await logActivity('UPDATE_STUDENT', (req as any).user.nim, `Updated student profile: ${oldNim} -> ${updated.nim} (${updated.name}).`);
+  
+  if (oldNim.toUpperCase().trim() !== updated.nim.toUpperCase().trim()) {
+    disconnectUserSockets(io, oldNim, 'Your NIM has been updated. Please re-authenticate.');
+  }
+
   io.emit('admin-user-updated', { oldNim, updated });
   res.json(updated);
 }));
@@ -707,6 +716,7 @@ router.delete('/users/:nim', requireAuth, requireAdmin, asyncHandler(async (req:
 
   await prisma.user.delete({ where: { nim: req.params.nim } });
   await logActivity('DELETE_STUDENT', (req as any).user.nim, `Permanently purged student ${existing.name} (${existing.nim}) from the system.`);
+  disconnectUserSockets(io, req.params.nim, 'Your account has been deleted.');
   io.emit('admin-user-deleted', { nim: req.params.nim });
   res.json({ message: `Mahasiswa ${req.params.nim} berhasil dihapus dari sistem.` });
 }));
@@ -1001,6 +1011,11 @@ router.put('/admins/:nim', requireAuth, requireSuperAdmin, validate(updateAdminS
   });
 
   await logActivity('ADMIN_MODIFIED', (req as any).user.nim, `Modified admin ${updated.name} (Role: ${role}, Active: ${isActive})`);
+
+  if (isActive === false || role !== undefined) {
+    disconnectUserSockets(io, nim, 'Your admin account has been deactivated or modified. Please re-authenticate.');
+  }
+
   io.emit('superadmin-user-updated', updated);
   res.json(updated);
 }));
@@ -1018,6 +1033,7 @@ router.delete('/admins/:nim', requireAuth, requireSuperAdmin, asyncHandler(async
   await prisma.user.delete({ where: { nim } });
 
   await logActivity('ADMIN_DELETED', (req as any).user.nim, `Deleted admin ${admin.name} (${admin.email})`);
+  disconnectUserSockets(io, nim, 'Your admin account has been deleted.');
   io.emit('superadmin-user-deleted', { nim });
   res.json({ message: 'Admin deleted successfully' });
 }));

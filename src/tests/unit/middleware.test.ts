@@ -141,7 +141,7 @@ describe('requireAuth', () => {
 
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: payload.email },
-      select: { isActive: true },
+      select: { nim: true, name: true, email: true, role: true, isActive: true },
     });
     expect(next).toHaveBeenCalledOnce();
     expect((req as any).user).toMatchObject(payload);
@@ -162,7 +162,7 @@ describe('requireAuth', () => {
 
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: payload.email },
-      select: { isActive: true },
+      select: { nim: true, name: true, email: true, role: true, isActive: true },
     });
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(401);
@@ -183,7 +183,7 @@ describe('requireAuth', () => {
 
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: payload.email },
-      select: { isActive: true },
+      select: { nim: true, name: true, email: true, role: true, isActive: true },
     });
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(401);

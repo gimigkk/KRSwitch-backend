@@ -48,7 +48,7 @@ function setupHappyPathTx(tx: TxMock) {
     .mockResolvedValueOnce({ nim: NIM_OFFERER, parallelClassId: classA.id });
 
   tx.enrollment.findMany.mockResolvedValue([]);
-  tx.barterOffer.update.mockResolvedValue({});
+  tx.barterOffer.updateMany.mockResolvedValue({ count: 1 });
   tx.enrollment.updateMany.mockResolvedValue({});
   tx.barterOffer.findMany.mockResolvedValue([]);
   tx.notification.create.mockResolvedValue({ id: 1 });
@@ -70,7 +70,7 @@ describe('autoMatch', () => {
     const result = await autoMatch(newOffer);
 
     expect(result.matched).toBe(false);
-    expect(tx.barterOffer.update).not.toHaveBeenCalled();
+    expect(tx.barterOffer.updateMany).not.toHaveBeenCalled();
   });
 
   it('returns { matched: false } when the new offer row is missing (race condition)', async () => {
@@ -124,7 +124,7 @@ describe('autoMatch', () => {
     const result = await autoMatch(newOffer);
 
     expect(result.matched).toBe(false);
-    expect(tx.barterOffer.update).not.toHaveBeenCalled();
+    expect(tx.barterOffer.updateMany).not.toHaveBeenCalled();
   });
 
   it('returns full match result and performs all DB writes on a happy path', async () => {
@@ -134,11 +134,11 @@ describe('autoMatch', () => {
 
     expect(result.matched).toBe(true);
 
-    expect(tx.barterOffer.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: counterOffer.id }, data: expect.objectContaining({ status: 'matched' }) })
+    expect(tx.barterOffer.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: counterOffer.id, status: 'open' }, data: expect.objectContaining({ status: 'matched' }) })
     );
-    expect(tx.barterOffer.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: newOfferRow.id }, data: expect.objectContaining({ status: 'matched' }) })
+    expect(tx.barterOffer.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: newOfferRow.id, status: 'open' }, data: expect.objectContaining({ status: 'matched' }) })
     );
 
     expect(tx.enrollment.updateMany).toHaveBeenCalledWith({

@@ -12,16 +12,21 @@ export function setupSocket(io: Server) {
   io.on('connection', (socket) => {
     console.log(`[Socket] New connection attempt, socket ID: ${socket.id}, transport: ${socket.conn.transport.name}`);
 
-    // Perbaikan HIGH-6: koneksi tanpa auth dikasih waktu 10 detik buat authenticate
+    // Perbaikan HIGH-6: koneksi tanpa auth dikasih waktu 10 detik buat authenticate (50ms di test env)
+    const timeoutLimit = process.env.NODE_ENV === 'test' ? 50 : 10_000;
     const authTimeout = setTimeout(() => {
       if (!socket.data.nim) {
         console.warn(`[Socket] Authentication timeout for socket ID: ${socket.id}. Disconnecting...`);
         socket.emit('auth-error', { error: 'Authentication timeout' });
         socket.disconnect(true);
       }
-    }, 10_000);
+    }, timeoutLimit);
 
     socket.on('authenticate', (token: string) => {
+      if (socket.data.nim) {
+        console.warn(`[Socket] Socket ID ${socket.id} is already authenticated as user ${socket.data.nim}. Ignoring repeat authentication.`);
+        return;
+      }
       try {
         console.log(`[Socket] Authenticating socket ID: ${socket.id}...`);
         const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
@@ -50,4 +55,19 @@ export function setupSocket(io: Server) {
       clearTimeout(authTimeout);
     });
   });
+}
+
+export function disconnectUserSockets(io: Server, nim: string, reasonMessage: string) {
+  const targetRoom = `user-${nim}`;
+  const connectedSockets = io?.sockets?.adapter?.rooms?.get(targetRoom);
+  if (connectedSockets) {
+    for (const socketId of Array.from(connectedSockets)) {
+      const socket = io?.sockets?.sockets?.get(socketId);
+      if (socket) {
+        console.warn(`[Socket] Force-disconnecting user ${nim} (socket: ${socketId}). Reason: ${reasonMessage}`);
+        socket.emit('auth-error', { error: reasonMessage });
+        socket.disconnect(true);
+      }
+    }
+  }
 }

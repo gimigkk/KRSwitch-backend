@@ -40,7 +40,7 @@ model Enrollment {
   id              Int           @id @default(autoincrement())
   nim             String
   parallelClassId Int
-  user            User          @relation(fields: [nim], references: [nim], onDelete: Cascade)
+  user            User          @relation(fields: [nim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
   parallelClass   ParallelClass @relation(fields: [parallelClassId], references: [id], onDelete: Cascade)
 
   @@unique([nim, parallelClassId])
@@ -57,8 +57,8 @@ model BarterOffer {
   takerNim      String?
   completedAt   DateTime?
   myClass       ParallelClass @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)
-  offerer       User          @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade)
-  taker         User?         @relation("Taker", fields: [takerNim], references: [nim])
+  offerer       User          @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
+  taker         User?         @relation("Taker", fields: [takerNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
   wantedClass   ParallelClass @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
 
   @@index([status])
@@ -76,7 +76,7 @@ model Notification {
   read         Boolean  @default(false)
   createdAt    DateTime @default(now())
   data         Json
-  recipient    User     @relation(fields: [recipientNim], references: [nim], onDelete: Cascade)
+  recipient    User     @relation(fields: [recipientNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([recipientNim, read])
   @@index([recipientNim, createdAt(sort: Desc)])

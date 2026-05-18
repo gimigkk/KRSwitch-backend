@@ -69,10 +69,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
       console.log('[requireAuth] JWT verified successfully for user:', payload.email);
       
-      // Cek status aktif user langsung di database
+      // Cek status aktif user langsung di database dan ambil data terupdate
       const dbUser = await prisma.user.findUnique({
         where: { email: payload.email },
-        select: { isActive: true }
+        select: { nim: true, name: true, email: true, role: true, isActive: true }
       });
       
       if (dbUser && dbUser.isActive === false) {
@@ -86,7 +86,14 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
         continue; // User kehapus di DB, coba token berikutnya
       }
 
-      req.user = payload;
+      // Gunakan data terbaru dari database untuk req.user agar NIM/Name yang diedit admin langsung sinkron
+      req.user = {
+        nim: dbUser.nim ?? payload.nim,
+        name: dbUser.name ?? payload.name,
+        email: dbUser.email ?? payload.email,
+        role: dbUser.role ?? payload.role,
+        picture: payload.picture
+      };
       return next(); // Found a valid, active token, proceed
     } catch (err) {
       console.log('[requireAuth] Token verification failed:', err instanceof Error ? err.message : err);

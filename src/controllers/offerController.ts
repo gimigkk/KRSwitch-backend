@@ -184,7 +184,7 @@ export async function autoMatch(newOffer: {
   offererNim: string;
   myClassId: number;
   wantedClassId: number;
-}): Promise<{
+}, externalTx?: any): Promise<{
   matched: boolean;
   matchingOffer?: any;
   offer?: any;
@@ -194,7 +194,7 @@ export async function autoMatch(newOffer: {
   takerCancelled?: StaleCancelledOffer[];
   swaps?: { nim: string; oldClassId: number; newClassId: number }[];
 }> {
-  return prisma.$transaction(async (tx) => {
+  const run = async (tx: any) => {
     // lock offer yang cocok langsung di dalam transaksi biar ga race condition
     const matchingOffer = await tx.barterOffer.findFirst({
       where: {
@@ -235,9 +235,23 @@ export async function autoMatch(newOffer: {
 
     const now = new Date();
 
+    // Atomic conditional status update to claim both offers and fully prevent concurrent collisions
+    const [matchingOfferUpdate, offerUpdate] = await Promise.all([
+      tx.barterOffer.updateMany({
+        where: { id: matchingOffer.id, status: 'open' },
+        data: { status: 'matched', takerNim: offer.offererNim, completedAt: now }
+      }),
+      tx.barterOffer.updateMany({
+        where: { id: offer.id, status: 'open' },
+        data: { status: 'matched', takerNim: matchingOffer.offererNim, completedAt: now }
+      })
+    ]);
+
+    if (matchingOfferUpdate.count === 0 || offerUpdate.count === 0) {
+      throw new Error('Concurrent auto-match collision: offer already claimed');
+    }
+
     await Promise.all([
-      tx.barterOffer.update({ where: { id: matchingOffer.id }, data: { status: 'matched', takerNim: offer.offererNim, completedAt: now } }),
-      tx.barterOffer.update({ where: { id: offer.id }, data: { status: 'matched', takerNim: matchingOffer.offererNim, completedAt: now } }),
       tx.enrollment.updateMany({ where: { nim: matchingOffer.offererNim, parallelClassId: matchingOffer.myClassId }, data: { parallelClassId: matchingOffer.wantedClassId } }),
       tx.enrollment.updateMany({ where: { nim: offer.offererNim, parallelClassId: offer.myClassId }, data: { parallelClassId: offer.wantedClassId } }),
     ]);
@@ -282,5 +296,10 @@ export async function autoMatch(newOffer: {
         { nim: offer.offererNim, oldClassId: offer.myClassId, newClassId: offer.wantedClassId },
       ],
     };
-  });
+  };
+
+  if (externalTx) {
+    return run(externalTx);
+  }
+  return prisma.$transaction(run);
 }

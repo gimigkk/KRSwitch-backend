@@ -31,61 +31,75 @@ export function createOffersRouter(io: Server) {
     const { myClassId, wantedClassId } = req.body;
     const offererNim = req.user!.nim;
 
-    const enrollment = await prisma.enrollment.findFirst({ where: { nim: offererNim, parallelClassId: myClassId } });
-    if (!enrollment) return res.status(400).json({ error: 'You are not enrolled in this class' });
+    try {
+      const txResult = await prisma.$transaction(async (tx) => {
+        // Pessimistic session lock: serialize concurrent actions from the same student (double-click lock)
+        await tx.$queryRaw`SELECT nim FROM users WHERE nim = ${offererNim} FOR UPDATE`;
 
-    const duplicateOffer = await prisma.barterOffer.findFirst({ where: { offererNim, myClassId, status: 'open' } });
-    if (duplicateOffer) return res.status(400).json({ error: 'You already have an open offer for this class' });
+        const enrollment = await tx.enrollment.findFirst({ where: { nim: offererNim, parallelClassId: myClassId } });
+        if (!enrollment) throw new Error('You are not enrolled in this class');
 
-    const [myClass, wantedClass] = await Promise.all([
-      prisma.parallelClass.findUnique({ where: { id: myClassId } }),
-      prisma.parallelClass.findUnique({ where: { id: wantedClassId } }),
-    ]);
+        const duplicateOffer = await tx.barterOffer.findFirst({ where: { offererNim, myClassId, status: 'open' } });
+        if (duplicateOffer) throw new Error('You already have an open offer for this class');
 
-    if (!myClass || !wantedClass) return res.status(404).json({ error: 'Class not found' });
-    if (myClass.courseCode !== wantedClass.courseCode) return res.status(400).json({ error: 'Must be same course' });
-    if (myClass.classCode[0] !== wantedClass.classCode[0]) return res.status(400).json({ error: 'Must be same type (K⇌K, P⇌P, R⇌R)' });
+        const [myClass, wantedClass] = await Promise.all([
+          tx.parallelClass.findUnique({ where: { id: myClassId } }),
+          tx.parallelClass.findUnique({ where: { id: wantedClassId } }),
+        ]);
 
-    const offererOtherEnrollments = await getUserEnrollmentsExcluding(offererNim, myClassId);
-    const conflictingClass = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, wantedClass));
-    if (conflictingClass) {
-      return res.status(400).json({
-        error: `Jadwal bentrok: ${wantedClass.courseCode}-${wantedClass.classCode} bertabrakan dengan ${conflictingClass.parallelClass.courseCode}-${conflictingClass.parallelClass.classCode} (${conflictingClass.parallelClass.day} ${conflictingClass.parallelClass.timeStart}–${conflictingClass.parallelClass.timeEnd})`,
+        if (!myClass || !wantedClass) throw new Error('Class not found');
+        if (myClass.courseCode !== wantedClass.courseCode) throw new Error('Must be same course');
+        if (myClass.classCode[0] !== wantedClass.classCode[0]) throw new Error('Must be same type (K⇌K, P⇌P, R⇌R)');
+
+        const offererOtherEnrollments = await getUserEnrollmentsExcluding(offererNim, myClassId, tx);
+        const conflictingClass = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, wantedClass));
+        if (conflictingClass) {
+          throw new Error(
+            `Jadwal bentrok: ${wantedClass.courseCode}-${wantedClass.classCode} bertabrakan dengan ${conflictingClass.parallelClass.courseCode}-${conflictingClass.parallelClass.classCode} (${conflictingClass.parallelClass.day} ${conflictingClass.parallelClass.timeStart}–${conflictingClass.parallelClass.timeEnd})`
+          );
+        }
+
+        const offer = await tx.barterOffer.create({
+          data: { offererNim, myClassId, wantedClassId, status: 'open' },
+          include: { offerer: { select: { nim: true, name: true } }, myClass: true, wantedClass: true },
+        });
+
+        return { offer, myClass, wantedClass };
       });
-    }
 
-    const offer = await prisma.barterOffer.create({
-      data: { offererNim, myClassId, wantedClassId, status: 'open' },
-      include: { offerer: { select: { nim: true, name: true } }, myClass: true, wantedClass: true },
-    });
+      const { offer, myClass, wantedClass } = txResult;
 
-    await logActivity('BARTER_CREATED', offererNim, `Created open barter offer for ${myClass.courseCode} (${myClass.classCode}) -> looking for ${wantedClass.classCode}.`);
+      await logActivity('BARTER_CREATED', offererNim, `Created open barter offer for ${myClass.courseCode} (${myClass.classCode}) -> looking for ${wantedClass.classCode}.`);
+      io.emit('new-offer', offer);
 
-    io.emit('new-offer', offer);
+      // Pass outside the transaction context so that auto-matching errors don't roll back creation
+      const matchResult = await autoMatch({ id: offer.id, offererNim, myClassId, wantedClassId });
 
-    const matchResult = await autoMatch({ id: offer.id, offererNim, myClassId, wantedClassId });
+      if (matchResult.matched) {
+        const { matchingOffer, offererNotification, takerNotification, offererCancelled, takerCancelled, swaps } = matchResult;
 
-    if (matchResult.matched) {
-      const { matchingOffer, offererNotification, takerNotification, offererCancelled, takerCancelled, swaps } = matchResult;
+        io.emit('offer-taken', { offerId: matchingOffer!.id });
+        io.emit('offer-taken', { offerId: offer.id });
+        io.emit('enrollments-swapped', { swaps });
 
-      io.emit('offer-taken', { offerId: matchingOffer!.id });
-      io.emit('offer-taken', { offerId: offer.id });
-      io.emit('enrollments-swapped', { swaps });
+        io.to(`user-${matchingOffer!.offererNim}`).emit('new-notification', offererNotification);
+        io.to(`user-${offer.offererNim}`).emit('new-notification', takerNotification);
 
-      io.to(`user-${matchingOffer!.offererNim}`).emit('new-notification', offererNotification);
-      io.to(`user-${offer.offererNim}`).emit('new-notification', takerNotification);
-
-      for (const cancelled of offererCancelled!) {
-        io.emit('offer-taken', { offerId: cancelled.offerId });
-        io.to(`user-${matchingOffer!.offererNim}`).emit('offer-auto-cancelled', cancelled);
+        for (const cancelled of offererCancelled!) {
+          io.emit('offer-taken', { offerId: cancelled.offerId });
+          io.to(`user-${matchingOffer!.offererNim}`).emit('offer-auto-cancelled', cancelled);
+        }
+        for (const cancelled of takerCancelled!) {
+          io.emit('offer-taken', { offerId: cancelled.offerId });
+          io.to(`user-${offer.offererNim}`).emit('offer-auto-cancelled', cancelled);
+        }
       }
-      for (const cancelled of takerCancelled!) {
-        io.emit('offer-taken', { offerId: cancelled.offerId });
-        io.to(`user-${offer.offererNim}`).emit('offer-auto-cancelled', cancelled);
-      }
-    }
 
-    res.status(201).json({ offer, autoMatched: matchResult.matched });
+      return res.status(201).json({ offer, autoMatched: matchResult.matched });
+    } catch (err: any) {
+      if (err.message === 'Class not found') return res.status(404).json({ error: err.message });
+      return res.status(400).json({ error: err.message });
+    }
   }));
 
   router.post('/:id/take', requireStudent, validate(takeOfferSchema), asyncHandler(async (req: any, res: any) => {
@@ -93,6 +107,9 @@ export function createOffersRouter(io: Server) {
     const { takerNim } = req.body;
 
     const result = await prisma.$transaction(async (tx) => {
+      // Pessimistic session lock: serialize concurrent actions from the same student
+      await tx.$queryRaw`SELECT nim FROM users WHERE nim = ${takerNim} FOR UPDATE`;
+
       const offer = await tx.barterOffer.findUnique({
         where: { id: offerId },
         include: { myClass: true, wantedClass: true, offerer: { select: { nim: true, name: true } } },
@@ -132,8 +149,18 @@ export function createOffersRouter(io: Server) {
       const offererConflict = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, offer.wantedClass));
       if (offererConflict) throw new Error('Offerer now has a schedule conflict with the wanted class');
 
+      // Atomic conditional update: claim the offer only if it is STILL 'open'
+      const updateResult = await tx.barterOffer.updateMany({
+        where: { id: offerId, status: 'open' },
+        data: { status: 'matched', takerNim, completedAt: new Date() }
+      });
+
+      if (updateResult.count === 0) {
+        throw new Error('Offer already taken or matched concurrently by another user');
+      }
+
+      // Safe to swap enrollments since this caller successfully claimed the offer
       await Promise.all([
-        tx.barterOffer.update({ where: { id: offerId }, data: { status: 'matched', takerNim, completedAt: new Date() } }),
         tx.enrollment.updateMany({ where: { nim: offer.offererNim, parallelClassId: offer.myClassId }, data: { parallelClassId: offer.wantedClassId } }),
         tx.enrollment.updateMany({ where: { nim: takerNim, parallelClassId: offer.wantedClassId }, data: { parallelClassId: offer.myClassId } }),
       ]);

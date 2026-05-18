@@ -198,7 +198,7 @@ describe('Master Data Management', () => {
     const res = await request(app)
       .post('/api/admin/users')
       .set('Cookie', authCookie(operatorUser))
-      .send({ nim: 'M123', name: 'Test', email: 'not-an-email' });
+      .send({ nim: 'M6401211001', name: 'Test', email: 'not-an-email' });
     
     expect(res.status).toBe(400);
     expect(res.body.details[0].field).toBe('email');
@@ -209,14 +209,14 @@ describe('Master Data Management', () => {
     const res = await request(app)
       .post('/api/admin/users')
       .set('Cookie', authCookie(operatorUser))
-      .send({ nim: 'M123', email: 'test@ipb.ac.id' });
+      .send({ nim: 'M6401211001', email: 'test@ipb.ac.id' });
     
     expect(res.status).toBe(400);
   });
 
   it('PUT /api/admin/users/:oldNim updates student details including email', async () => {
     mockActiveUser(operatorUser);
-    const mockStudent = { nim: 'M123', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
+    const mockStudent = { nim: 'M6401211001', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
     
     vi.mocked(prisma.user.findUnique)
       .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requireAdmin isActive check
@@ -225,21 +225,21 @@ describe('Master Data Management', () => {
 
     vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null); // email exists check
 
-    const updatedStudent = { nim: 'M123NEW', name: 'New Name', email: 'new@ipb.ac.id', role: 'student' };
+    const updatedStudent = { nim: 'M6401211002', name: 'New Name', email: 'new@ipb.ac.id', role: 'student' };
     vi.mocked(prisma.user.update).mockResolvedValueOnce(updatedStudent as any);
 
     const res = await request(app)
-      .put('/api/admin/users/M123')
+      .put('/api/admin/users/M6401211001')
       .set('Cookie', authCookie(operatorUser))
-      .send({ newNim: 'M123NEW', newName: 'New Name', newEmail: 'new@ipb.ac.id' });
+      .send({ newNim: 'M6401211002', newName: 'New Name', newEmail: 'new@ipb.ac.id' });
 
     expect(res.status).toBe(200);
-    expect(res.body.nim).toBe('M123NEW');
+    expect(res.body.nim).toBe('M6401211002');
     expect(res.body.email).toBe('new@ipb.ac.id');
     expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { nim: 'M123' },
+      where: { nim: 'M6401211001' },
       data: {
-        nim: 'M123NEW',
+        nim: 'M6401211002',
         name: 'New Name',
         email: 'new@ipb.ac.id'
       }
@@ -284,17 +284,17 @@ describe('Master Data Management', () => {
 
   it('PUT /api/admin/users/:oldNim returns 400 if NIM is already taken', async () => {
     mockActiveUser(operatorUser);
-    const mockStudent = { nim: 'M123', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
+    const mockStudent = { nim: 'M6401211001', name: 'Old Name', email: 'old@ipb.ac.id', role: 'student' };
 
     vi.mocked(prisma.user.findUnique)
       .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requireAdmin isActive check
       .mockResolvedValueOnce(mockStudent as any) // existence check in route
-      .mockResolvedValueOnce({ nim: 'M123NEW', name: 'Other Student' } as any); // nimExists check
+      .mockResolvedValueOnce({ nim: 'M6401211002', name: 'Other Student' } as any); // nimExists check
 
     const res = await request(app)
-      .put('/api/admin/users/M123')
+      .put('/api/admin/users/M6401211001')
       .set('Cookie', authCookie(operatorUser))
-      .send({ newNim: 'M123NEW' });
+      .send({ newNim: 'M6401211002' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/NIM sudah terdaftar/i);
@@ -581,6 +581,31 @@ describe('Enrollment & KRS Management', () => {
     });
     expect(mockIo.to).toHaveBeenCalledWith('user-M123');
     expect(mockIo.emit).toHaveBeenCalledWith('new-notification', mockNotif);
+  });
+
+  it('PUT /api/admin/enrollments/:id successfully updates enrollment even if there is a schedule conflict (admin override)', async () => {
+    mockActiveUser(operatorUser);
+    const existingEnroll = { id: 1, nim: 'M123', parallelClassId: 10, parallelClass: { courseCode: 'CS101', classCode: 'K01' } };
+    const updatedEnroll = { 
+      id: 1, 
+      nim: 'M123', 
+      parallelClassId: 20, 
+      parallelClass: { courseCode: 'CS101', classCode: 'K02' },
+      user: { name: 'Student' }
+    };
+    const mockNotif = { id: 99, recipientNim: 'M123', type: 'admin_enrollment_updated', data: {} };
+
+    vi.mocked(prisma.enrollment.findUnique).mockResolvedValue(existingEnroll as any);
+    vi.mocked(prisma.enrollment.update).mockResolvedValue(updatedEnroll as any);
+    vi.mocked(prisma.notification.create).mockResolvedValue(mockNotif as any);
+
+    const res = await request(app)
+      .put('/api/admin/enrollments/1')
+      .set('Cookie', authCookie(operatorUser))
+      .send({ newParallelClassId: 20 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.parallelClassId).toBe(20);
   });
 
   it('DELETE /api/admin/enrollments/:id deletes enrollment, creates notification, and emits events', async () => {
