@@ -75,7 +75,11 @@ setupSocket(io);
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
 
-process.on('SIGINT', async () => {
+const gracefulShutdown = async (signal: string) => {
+  console.log(`[Server] ${signal} received. Shutting down gracefully...`);
   await prisma.$disconnect();
   process.exit(0);
-});
+};
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

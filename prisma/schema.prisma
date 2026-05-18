@@ -61,6 +61,11 @@ model BarterOffer {
   taker         User?         @relation("Taker", fields: [takerNim], references: [nim])
   wantedClass   ParallelClass @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
 
+  @@index([status])
+  @@index([offererNim])
+  @@index([takerNim])
+  @@index([myClassId])
+  @@index([wantedClassId])
   @@map("barter_offers")
 }
 
@@ -85,5 +90,7 @@ model ActivityLog {
   user_nim    String
   details     String
 
+  @@index([user_nim])
+  @@index([timestamp(sort: Desc)])
   @@map("activity_logs")
 }
