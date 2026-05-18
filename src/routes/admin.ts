@@ -50,7 +50,16 @@ router.get('/api/enrollments', requireAuth, asyncHandler(async (_req: any, res: 
 
 // httpOnly cookie tidak bisa dibaca JS, jadi kita issue short-lived token khusus buat socket auth
 router.get('/api/socket-token', requireAuth, (req: any, res) => {
-  const token = jwt.sign({ nim: req.user!.nim }, process.env.JWT_SECRET!, { expiresIn: '1m' });
+  const token = jwt.sign(
+    { 
+      nim: req.user!.nim,
+      name: req.user!.name,
+      email: req.user!.email,
+      role: req.user!.role 
+    }, 
+    process.env.JWT_SECRET!, 
+    { expiresIn: '1m' }
+  );
   res.json({ token });
 });
 
