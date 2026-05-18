@@ -268,4 +268,41 @@ describe('Socket.IO Handler Concurrency & Event Testing', () => {
     // Now the unique online count should drop to 0!
     expect(getOnlineCount()).toBe(0);
   });
+
+  it('enforces a maximum of 4 active devices per user and rejects subsequent connections', async () => {
+    const token = signToken();
+    const devices: ClientSocket[] = [];
+
+    // Connect and authenticate 4 devices
+    for (let i = 0; i < 4; i++) {
+      const dev = await createClient();
+      dev.emit('authenticate', token);
+      devices.push(dev);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify all 4 devices are successfully authenticated on the server (1 unique user online)
+    expect(getOnlineCount()).toBe(1);
+
+    // Connect a 5th device
+    const device5 = await createClient();
+    let errorReceived: any = null;
+    let wasDisconnected = false;
+    device5.on('auth-error', (data) => {
+      errorReceived = data;
+    });
+    device5.on('disconnect', () => {
+      wasDisconnected = true;
+    });
+
+    device5.emit('authenticate', token);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify the 5th device got rejected due to the limit
+    expect(errorReceived).toEqual({ error: 'Device limit reached. Maximum of 4 concurrent sessions allowed.' });
+    expect(wasDisconnected).toBe(true);
+
+    // Cleanup
+    devices.forEach(d => d.disconnect());
+  });
 });

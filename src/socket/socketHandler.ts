@@ -33,6 +33,15 @@ export function setupSocket(io: Server) {
         console.log(`[Socket] Authenticating socket ID: ${socket.id}...`);
         const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
         
+        // Periksa batasan maksimum 4 koneksi per akun (multi-device/multi-tab limit)
+        const activeSocketsInRoom = io.sockets.adapter.rooms.get(`user-${payload.nim}`);
+        if (activeSocketsInRoom && activeSocketsInRoom.size >= 4) {
+          console.warn(`[Socket] Authentication REJECTED for user ${payload.email} (socket: ${socket.id}). Reason: Max device limit reached (4).`);
+          socket.emit('auth-error', { error: 'Device limit reached. Maximum of 4 concurrent sessions allowed.' });
+          socket.disconnect(true);
+          return;
+        }
+
         socket.join(`user-${payload.nim}`);
         socket.data.nim = payload.nim;
         clearTimeout(authTimeout);
