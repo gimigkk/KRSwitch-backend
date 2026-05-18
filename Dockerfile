@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+# Set dummy DATABASE_URL for Prisma generate build-time check
+ENV DATABASE_URL="postgresql://postgres:postgrespassword@localhost:5432/krswitch"
 RUN npx prisma generate
 RUN npm run build
 
