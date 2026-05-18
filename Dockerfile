@@ -14,6 +14,8 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/production-seed.js ./production-seed.js
+COPY --from=builder /app/mock_data ./mock_data
 
 EXPOSE 5000
 # Wait for the PostgreSQL database container to be fully ready before pushing schema
