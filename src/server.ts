@@ -17,6 +17,7 @@ import { setActivityIo } from './utils/activity';
 import { csrfProtection } from './middleware/csrf';
 
 const app    = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';

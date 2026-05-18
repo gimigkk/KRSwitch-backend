@@ -20,13 +20,21 @@ declare global {
 
 // Hapus semua kemungkinan cookie auth biar nggak ada zombie cookie yang bikin lockout
 export function clearAllAuthCookies(res: Response): void {
-  res.clearCookie('token');
-  res.clearCookie('token', { domain: 'localhost' });
-  res.clearCookie('token', { domain: '.localhost' });
-  res.clearCookie('token', { domain: '127.0.0.1' });
+  const isProd = process.env.NODE_ENV === 'production';
+  const clearOptions = {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'lax' as const,
+    path: '/'
+  };
+
+  res.clearCookie('token', clearOptions);
+  res.clearCookie('token', { ...clearOptions, domain: 'localhost' });
+  res.clearCookie('token', { ...clearOptions, domain: '.localhost' });
+  res.clearCookie('token', { ...clearOptions, domain: '127.0.0.1' });
   if (process.env.COOKIE_DOMAIN && process.env.COOKIE_DOMAIN !== 'localhost') {
-    res.clearCookie('token', { domain: process.env.COOKIE_DOMAIN });
-    res.clearCookie('token', { domain: '.' + process.env.COOKIE_DOMAIN });
+    res.clearCookie('token', { ...clearOptions, domain: process.env.COOKIE_DOMAIN });
+    res.clearCookie('token', { ...clearOptions, domain: '.' + process.env.COOKIE_DOMAIN });
   }
 }
 
@@ -42,7 +50,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     .split(';')
     .map(c => c.trim())
     .filter(c => c.startsWith('token='))
-    .map(c => c.substring(6));
+    .map(c => {
+      let val = c.substring(6);
+      if (val.startsWith('"') && val.endsWith('"')) {
+        val = val.substring(1, val.length - 1);
+      }
+      return val;
+    });
 
   if (tokens.length === 0) {
     clearAllAuthCookies(res);

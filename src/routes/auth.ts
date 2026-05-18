@@ -126,8 +126,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role, picture: googlePayload.picture };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
 
-    res.clearCookie('token'); // Hapus kemungkinan cookie host-only zombie sebelum pasang token baru yang valid
-    res.clearCookie('token', { domain: 'localhost' }); // Hapus paksa cookie localhost lama biar nggak bentrok
+    clearAllAuthCookies(res); // Hapus kemungkinan zombie cookie sebelum pasang token baru yang valid
     res.cookie('token', sessionToken, {
       httpOnly: true,
       sameSite: 'lax',

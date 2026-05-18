@@ -62,15 +62,22 @@ describe('requireAuth', () => {
 
     await requireAuth(req, res, next);
 
+    const expectedClearOptions = {
+      httpOnly: true,
+      secure: false, // process.env.NODE_ENV is 'test'
+      sameSite: 'lax' as const,
+      path: '/'
+    };
+
     // clearAllAuthCookies clears 6 combinations:
     // host-only, localhost, .localhost, 127.0.0.1, production.com, .production.com
     expect(res.clearCookie).toHaveBeenCalledTimes(6);
-    expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
-    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'localhost' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { domain: '.localhost' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(4, 'token', { domain: '127.0.0.1' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(5, 'token', { domain: 'production.com' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(6, 'token', { domain: '.production.com' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token', expectedClearOptions);
+    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { ...expectedClearOptions, domain: 'localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { ...expectedClearOptions, domain: '.localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(4, 'token', { ...expectedClearOptions, domain: '127.0.0.1' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(5, 'token', { ...expectedClearOptions, domain: 'production.com' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(6, 'token', { ...expectedClearOptions, domain: '.production.com' });
     
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'Session expired, please log in again' });
@@ -89,12 +96,19 @@ describe('requireAuth', () => {
 
     await requireAuth(req, res, next);
 
+    const expectedClearOptions = {
+      httpOnly: true,
+      secure: false, // process.env.NODE_ENV is 'test'
+      sameSite: 'lax' as const,
+      path: '/'
+    };
+
     // COOKIE_DOMAIN=localhost: clears 4 combinations: host-only, localhost, .localhost, 127.0.0.1
     expect(res.clearCookie).toHaveBeenCalledTimes(4);
-    expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token');
-    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { domain: 'localhost' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { domain: '.localhost' });
-    expect(res.clearCookie).toHaveBeenNthCalledWith(4, 'token', { domain: '127.0.0.1' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(1, 'token', expectedClearOptions);
+    expect(res.clearCookie).toHaveBeenNthCalledWith(2, 'token', { ...expectedClearOptions, domain: 'localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(3, 'token', { ...expectedClearOptions, domain: '.localhost' });
+    expect(res.clearCookie).toHaveBeenNthCalledWith(4, 'token', { ...expectedClearOptions, domain: '127.0.0.1' });
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
     
