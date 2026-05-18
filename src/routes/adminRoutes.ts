@@ -196,6 +196,7 @@ router.post(
     
     // Simpan file ke disk
     const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_classes.csv');
+    fs.mkdirSync(path.dirname(storagePath), { recursive: true });
     fs.writeFileSync(storagePath, req.file.buffer);
 
     io.emit('admin-schedule-updated', { count: result.count });
@@ -265,6 +266,7 @@ router.post(
 
     // Simpan file ke disk
     const storagePath = path.join(process.cwd(), 'storage', 'master', 'master_students.csv');
+    fs.mkdirSync(path.dirname(storagePath), { recursive: true });
     fs.writeFileSync(storagePath, req.file.buffer);
 
     io.emit('admin-user-created', { count: parsedStudentsData.length });
