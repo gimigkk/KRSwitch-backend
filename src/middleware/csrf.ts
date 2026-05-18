@@ -17,23 +17,24 @@ function isOriginAllowed(origin: string): boolean {
   );
 }
 
-// Definisikan doubleCsrf standard untuk anti-CSRF token verification
+// Definisikan doubleCsrf standard dengan opsi yang kompatibel dengan csrf-csrf v4.x
 const {
   doubleCsrfProtection: rawDoubleCsrfProtection,
   invalidCsrfTokenError,
-  generateToken,
+  generateCsrfToken,
 } = doubleCsrf({
   getSecret: () => process.env.JWT_SECRET || 'secret-key-fallback-csrf',
+  getSessionIdentifier: (req: Request) => req.cookies?.token || req.ip || 'default-session',
   cookieName: 'x-csrf-token',
   cookieOptions: {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production' || process.env.BACKEND_URL?.startsWith('https://'),
   },
-  getTokenFromRequest: (req) => req.headers['x-csrf-token'] as string,
+  getCsrfTokenFromRequest: (req: Request) => req.headers['x-csrf-token'] as string | undefined,
 });
 
-export { invalidCsrfTokenError, generateToken };
+export { invalidCsrfTokenError, generateCsrfToken };
 
 // Middleware standard yang di-export dan di-use langsung di server.ts/createTestApp.ts.
 // Ini diekspos dengan nama 'doubleCsrfProtection' agar CodeQL mendeteksinya dengan sukses.
