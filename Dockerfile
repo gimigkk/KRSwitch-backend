@@ -17,6 +17,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/production-seed.js ./production-seed.js
+COPY --from=builder /app/barter-seed.js ./barter-seed.js
+COPY --from=builder /app/enhanced-seed.js ./enhanced-seed.js
 COPY --from=builder /app/mock_data ./mock_data
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
