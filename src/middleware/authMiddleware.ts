@@ -18,12 +18,11 @@ declare global {
   }
 }
 
-// Hapus semua kemungkinan cookie auth biar nggak ada zombie cookie yang bikin lockout
 export function clearAllAuthCookies(res: Response): void {
-  const isProd = process.env.NODE_ENV === 'production';
+  const isSecure = process.env.NODE_ENV === 'production' || process.env.BACKEND_URL?.startsWith('https://');
   const clearOptions = {
     httpOnly: true,
-    secure: isProd,
+    secure: isSecure,
     sameSite: 'lax' as const,
     path: '/'
   };
@@ -40,6 +39,7 @@ export function clearAllAuthCookies(res: Response): void {
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const cookieHeader = req.headers?.cookie;
+
   if (!cookieHeader) {
     clearAllAuthCookies(res);
     return res.status(401).json({ error: 'Not authenticated' });
@@ -67,6 +67,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   for (const token of tokens) {
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthUser;
+      console.log('[requireAuth] JWT verified successfully for user:', payload.email);
       
       // Cek status aktif user langsung di database
       const dbUser = await prisma.user.findUnique({
@@ -75,17 +76,20 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
       
       if (dbUser && dbUser.isActive === false) {
+        console.log('[requireAuth] User account has been disabled in DB:', payload.email);
         clearAllAuthCookies(res);
         return res.status(401).json({ error: 'Account has been disabled' });
       }
 
       if (!dbUser) {
+        console.log('[requireAuth] User not found in DB:', payload.email);
         continue; // User kehapus di DB, coba token berikutnya
       }
 
       req.user = payload;
       return next(); // Found a valid, active token, proceed
-    } catch {
+    } catch (err) {
+      console.log('[requireAuth] Token verification failed:', err instanceof Error ? err.message : err);
       continue; // Token basi atau invalid, coba token berikutnya
     }
   }

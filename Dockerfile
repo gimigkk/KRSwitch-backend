@@ -1,22 +1,17 @@
-# backend/Dockerfile
-FROM node:18-alpine
-
+FROM node:20-alpine AS builder
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
-COPY prisma ./prisma/
-
-# Install dependencies
 RUN npm install
-
-# Generate Prisma Client
-RUN npx prisma generate
-
-# Copy source code
 COPY . .
+RUN npx prisma generate
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/package.json ./package.json
 
 EXPOSE 5000
-
-# Start server
-CMD ["npm", "start"]
+CMD ["sh", "-c", "npx prisma db push && node dist/server.js"]
