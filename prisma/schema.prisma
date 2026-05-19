@@ -12,6 +12,7 @@ model User {
   email          String         @unique
   role           String         @default("student")
   isActive       Boolean        @default(true)
+  picture        String?
   offeredBarters BarterOffer[]  @relation("Offerer")
   takenBarters   BarterOffer[]  @relation("Taker")
   enrollments    Enrollment[]

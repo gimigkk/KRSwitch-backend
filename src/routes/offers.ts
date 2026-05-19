@@ -21,7 +21,7 @@ export function createOffersRouter(io: Server) {
   router.get('/', requireStudent, asyncHandler(async (req: any, res: any) => {
     const offers = await prisma.barterOffer.findMany({
       where: { status: 'open' },
-      include: { offerer: { select: { nim: true, name: true } }, myClass: true, wantedClass: true },
+      include: { offerer: { select: { nim: true, name: true, picture: true } }, myClass: true, wantedClass: true },
       orderBy: { createdAt: 'desc' },
     });
     res.json(offers);
@@ -61,7 +61,7 @@ export function createOffersRouter(io: Server) {
 
         const offer = await tx.barterOffer.create({
           data: { offererNim, myClassId, wantedClassId, status: 'open' },
-          include: { offerer: { select: { nim: true, name: true } }, myClass: true, wantedClass: true },
+          include: { offerer: { select: { nim: true, name: true, picture: true } }, myClass: true, wantedClass: true },
         });
 
         return { offer, myClass, wantedClass };
@@ -112,7 +112,7 @@ export function createOffersRouter(io: Server) {
 
       const offer = await tx.barterOffer.findUnique({
         where: { id: offerId },
-        include: { myClass: true, wantedClass: true, offerer: { select: { nim: true, name: true } } },
+        include: { myClass: true, wantedClass: true, offerer: { select: { nim: true, name: true, picture: true } } },
       });
 
       if (!offer) throw new Error('Offer not found');

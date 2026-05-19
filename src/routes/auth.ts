@@ -174,6 +174,14 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       return redirectWithError(res, 'account_disabled', frontendUrl);
     }
 
+    if (googlePayload.picture) {
+      console.log('[google/callback] Updating user profile picture in DB...');
+      await prisma.user.update({
+        where: { email: googlePayload.email },
+        data: { picture: googlePayload.picture }
+      });
+    }
+
     console.log('[google/callback] User authorized successfully. Generating session JWT...');
     const jwtPayload: JwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role, picture: googlePayload.picture };
     const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
