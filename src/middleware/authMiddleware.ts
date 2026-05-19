@@ -72,7 +72,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       // Cek status aktif user langsung di database dan ambil data terupdate
       const dbUser = await prisma.user.findUnique({
         where: { email: payload.email },
-        select: { nim: true, name: true, email: true, role: true, isActive: true }
+        select: { nim: true, name: true, email: true, role: true, isActive: true, picture: true }
       });
       
       if (dbUser && dbUser.isActive === false) {
@@ -86,13 +86,27 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
         continue; // User kehapus di DB, coba token berikutnya
       }
 
+      // Self-healing: jika JWT memiliki picture tapi DB kosong (user login sebelum migrasi gambar), update DB
+      if (!dbUser.picture && payload.picture) {
+        console.log('[requireAuth] Self-healing user picture in DB from JWT payload...');
+        try {
+          await prisma.user.update({
+            where: { email: payload.email },
+            data: { picture: payload.picture }
+          });
+          dbUser.picture = payload.picture;
+        } catch (dbErr) {
+          console.error('[requireAuth] Failed to self-heal user picture:', dbErr);
+        }
+      }
+
       // Gunakan data terbaru dari database untuk req.user agar NIM/Name yang diedit admin langsung sinkron
       req.user = {
         nim: dbUser.nim ?? payload.nim,
         name: dbUser.name ?? payload.name,
         email: dbUser.email ?? payload.email,
         role: dbUser.role ?? payload.role,
-        picture: payload.picture
+        picture: dbUser.picture || payload.picture
       };
       return next(); // Found a valid, active token, proceed
     } catch (err) {
