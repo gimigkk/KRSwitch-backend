@@ -209,6 +209,39 @@ router.get('/google/callback', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/dev-login', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).send('Forbidden in production');
+  }
+  const email = (req.query.email as string) || 'budi@apps.ipb.ac.id';
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { nim: true, name: true, email: true, role: true, isActive: true },
+    });
+    if (!user) {
+      return res.status(404).send('Mock user not found');
+    }
+    const jwtPayload = { nim: user.nim, name: user.name, email: user.email, role: user.role };
+    const sessionToken = jwt.sign(jwtPayload, process.env.JWT_SECRET!, { expiresIn: '7d' });
+    
+    clearAllAuthCookies(res);
+    
+    res.cookie('token', sessionToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      secure: false,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    
+    res.redirect(`${FRONTEND_URL}/`);
+  } catch (err) {
+    console.error('[dev-login] error:', err);
+    res.status(500).send('Dev login failed');
+  }
+});
+
 router.post('/logout', (_req: Request, res: Response) => {
   clearAllAuthCookies(res);
   res.json({ message: 'Logged out' });
