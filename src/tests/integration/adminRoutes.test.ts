@@ -845,3 +845,139 @@ describe('Batch Operations', () => {
     expect(mockIo.emit).toHaveBeenCalledWith('admin-system-reset', expect.anything());
   });
 });
+
+// ─── Decoupled Routes Additional Tests ─────────────────────────────────────────
+describe('Decoupled Routes Additional Tests', () => {
+  it('GET /api/admin/classes/:id/students returns students enrolled in class', async () => {
+    mockActiveUser(operatorUser);
+    const mockEnrollments = [
+      { user: { nim: 'M123', name: 'John Doe' } },
+      { user: { nim: 'M456', name: 'Jane Doe' } }
+    ];
+    vi.mocked(prisma.enrollment.findMany).mockResolvedValue(mockEnrollments as any);
+
+    const res = await request(app)
+      .get('/api/admin/classes/10/students')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { nim: 'M123', name: 'John Doe' },
+      { nim: 'M456', name: 'Jane Doe' }
+    ]);
+    expect(prisma.enrollment.findMany).toHaveBeenCalledWith({
+      where: { parallelClassId: 10 },
+      include: { user: { select: { nim: true, name: true } } }
+    });
+  });
+
+  it('GET /api/admin/users/:nim returns student profile details', async () => {
+    mockActiveUser(operatorUser);
+    const mockStudentDetail = {
+      nim: 'M123',
+      name: 'John Doe',
+      email: 'john@ipb.ac.id',
+      role: 'student',
+      enrollments: [
+        { id: 1, parallelClass: { id: 10, courseCode: 'KOM1221', classCode: 'K1' } }
+      ],
+      offeredBarters: [
+        { id: 2, status: 'open', myClass: { id: 10 }, wantedClass: { id: 11 } }
+      ]
+    };
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any) // requirement check
+      .mockResolvedValueOnce(mockStudentDetail as any); // user query
+
+    const res = await request(app)
+      .get('/api/admin/users/M123')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(200);
+    expect(res.body.nim).toBe('M123');
+    expect(res.body.enrollments).toHaveLength(1);
+    expect(res.body.offeredBarters).toHaveLength(1);
+  });
+
+  it('GET /api/admin/users/:nim returns 404 if student not found', async () => {
+    mockActiveUser(operatorUser);
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce({ ...operatorUser, isActive: true } as any)
+      .mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get('/api/admin/users/M999')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/tidak ditemukan/i);
+  });
+
+  it('GET /api/admin/template/:type returns templates or 400', async () => {
+    mockActiveUser(operatorUser);
+
+    // Students template
+    const resStudents = await request(app)
+      .get('/api/admin/template/students')
+      .set('Cookie', authCookie(operatorUser));
+    expect(resStudents.status).toBe(200);
+    expect(resStudents.headers['content-type']).toMatch(/text\/csv/);
+    expect(resStudents.headers['content-disposition']).toMatch(/template_mahasiswa.csv/);
+
+    // Classes template
+    const resClasses = await request(app)
+      .get('/api/admin/template/classes')
+      .set('Cookie', authCookie(operatorUser));
+    expect(resClasses.status).toBe(200);
+    expect(resClasses.headers['content-disposition']).toMatch(/template_jadwal.csv/);
+
+    // Invalid type
+    const resInvalid = await request(app)
+      .get('/api/admin/template/invalid')
+      .set('Cookie', authCookie(operatorUser));
+    expect(resInvalid.status).toBe(400);
+  });
+
+  it('GET /api/admin/master-files reports CSV file status', async () => {
+    mockActiveUser(operatorUser);
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+    const res = await request(app)
+      .get('/api/admin/master-files')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ students: true, classes: true });
+    existsSpy.mockRestore();
+  });
+
+  it('GET /api/admin/export-recap returns recap CSV file', async () => {
+    mockActiveUser(operatorUser);
+    const mockEnrollments = [
+      {
+        user: { nim: 'M123', name: 'John Doe', email: 'john@ipb.ac.id' },
+        parallelClass: {
+          courseCode: 'CS101',
+          courseName: 'Intro',
+          classCode: 'K1',
+          day: 'Senin',
+          timeStart: '08:00',
+          timeEnd: '09:40',
+          room: 'R101'
+        }
+      }
+    ];
+    vi.mocked(prisma.enrollment.findMany).mockResolvedValue(mockEnrollments as any);
+
+    const res = await request(app)
+      .get('/api/admin/export-recap')
+      .set('Cookie', authCookie(operatorUser));
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/csv/);
+    expect(res.headers['content-disposition']).toMatch(/Rekap_Jadwal_KRSwitch_/);
+    expect(res.text).toContain('M123');
+    expect(res.text).toContain('John Doe');
+  });
+});
+
