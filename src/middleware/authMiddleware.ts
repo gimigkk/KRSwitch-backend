@@ -125,3 +125,19 @@ export function requireStudent(req: Request, res: Response, next: NextFunction) 
   if (req.user.role !== 'student') return res.status(403).json({ error: 'Forbidden: student only' });
   next();
 }
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (req.user.role !== 'super_admin' && req.user.role !== 'operator') {
+    return res.status(403).json({ error: 'Forbidden: admin/operator only' });
+  }
+  next();
+}
+
+export function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden: super admin only' });
+  }
+  next();
+}
