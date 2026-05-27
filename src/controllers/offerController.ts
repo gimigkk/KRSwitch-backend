@@ -154,7 +154,11 @@ export async function cancelStaleOffers(
       continue;
     }
 
-    const conflict = newSchedule.find(c => hasScheduleConflict(c, offer.wantedClass));
+    // We must EXCLUDE the myClass of THIS offer from the conflict check,
+    // because if this offer is accepted, myClass will be dropped anyway.
+    const scheduleWithoutMyClass = newSchedule.filter(c => c.id !== offer.myClassId);
+    
+    const conflict = scheduleWithoutMyClass.find(c => hasScheduleConflict(c, offer.wantedClass));
     if (conflict) {
       await tx.barterOffer.update({ where: { id: offer.id }, data: { status: 'cancelled' } });
       cancelled.push({
