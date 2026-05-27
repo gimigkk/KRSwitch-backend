@@ -5,6 +5,7 @@ import { asyncHandler } from '../../middleware/helpers';
 import { prisma } from '../../prisma/db';
 import { createNotification } from '../../controllers/offerController';
 import { logActivity } from '../../utils/activity';
+import { sendNotificationEmail } from '../../utils/email';
 
 export default (io: Server) => {
   const router = Router();
@@ -34,6 +35,7 @@ export default (io: Server) => {
         reason: 'admin_cancelled'
       });
       io.to(`user-${fullOffer.offererNim}`).emit('new-notification', notification);
+      sendNotificationEmail(fullOffer.offererNim, notification.type as any, notification.data).catch(console.error);
     }
     
     io.emit('offer-taken', { offerId });

@@ -13,6 +13,7 @@ import {
   autoMatch,
 } from '../controllers/offerController';
 import { logActivity } from '../utils/activity';
+import { sendNotificationEmail } from '../utils/email';
 
 export function createOffersRouter(io: Server) {
   const router = Router();
@@ -84,6 +85,9 @@ export function createOffersRouter(io: Server) {
 
         io.to(`user-${matchingOffer!.offererNim}`).emit('new-notification', offererNotification);
         io.to(`user-${offer.offererNim}`).emit('new-notification', takerNotification);
+
+        sendNotificationEmail(matchingOffer!.offererNim, offererNotification.type as any, offererNotification.data).catch(console.error);
+        sendNotificationEmail(offer.offererNim, takerNotification.type as any, takerNotification.data).catch(console.error);
 
         for (const cancelled of offererCancelled!) {
           io.emit('offer-taken', { offerId: cancelled.offerId });
@@ -213,6 +217,10 @@ export function createOffersRouter(io: Server) {
 
     io.to(`user-${offer.offererNim}`).emit('new-notification', offererNotification);
     io.to(`user-${takerNim}`).emit('new-notification', takerNotification);
+
+    sendNotificationEmail(offer.offererNim, offererNotification.type as any, offererNotification.data).catch(console.error);
+    sendNotificationEmail(takerNim, takerNotification.type as any, takerNotification.data).catch(console.error);
+
     io.to(`user-${offer.offererNim}`).emit('barter-success', { offerId, takerNim });
     io.to(`user-${takerNim}`).emit('barter-success', { offerId, offererNim: offer.offererNim });
 
@@ -260,6 +268,7 @@ export function createOffersRouter(io: Server) {
 
     if (notification) {
       io.to(`user-${userNim}`).emit('new-notification', notification);
+      sendNotificationEmail(userNim, notification.type as any, notification.data).catch(console.error);
     }
     io.emit('offer-taken', { offerId });
     res.json({ message: 'Offer cancelled' });

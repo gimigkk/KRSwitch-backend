@@ -5,6 +5,7 @@ import { asyncHandler } from '../../middleware/helpers';
 import { prisma } from '../../prisma/db';
 import { createNotification } from '../../controllers/offerController';
 import { logActivity } from '../../utils/activity';
+import { sendNotificationEmail } from '../../utils/email';
 
 export default (io: Server) => {
   const router = Router();
@@ -73,6 +74,9 @@ export default (io: Server) => {
 
     io.to(`user-${nim1}`).emit('new-notification', notif1);
     io.to(`user-${nim2}`).emit('new-notification', notif2);
+
+    sendNotificationEmail(nim1, notif1.type as any, notif1.data).catch(console.error);
+    sendNotificationEmail(nim2, notif2.type as any, notif2.data).catch(console.error);
 
     const staleOffers = await prisma.barterOffer.findMany({
       where: {

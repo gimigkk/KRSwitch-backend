@@ -5,6 +5,7 @@ import { asyncHandler } from '../../middleware/helpers';
 import { prisma } from '../../prisma/db';
 import { createNotification } from '../../controllers/offerController';
 import { logActivity } from '../../utils/activity';
+import { sendNotificationEmail } from '../../utils/email';
 
 export default (io: Server) => {
   const router = Router();
@@ -58,6 +59,7 @@ export default (io: Server) => {
     io.emit('admin-enrollment-updated', updated);
     io.to(`user-${updated.nim}`).emit('enrollment-updated', updated);
     io.to(`user-${updated.nim}`).emit('new-notification', notification);
+    sendNotificationEmail(updated.nim, notification.type as any, notification.data).catch(console.error);
     
     res.json(updated);
   }));
@@ -83,6 +85,7 @@ export default (io: Server) => {
     io.emit('admin-enrollment-deleted', { id: enrollmentId, nim });
     io.to(`user-${nim}`).emit('enrollment-deleted', { id: enrollmentId });
     io.to(`user-${nim}`).emit('new-notification', notification);
+    sendNotificationEmail(nim, notification.type as any, notification.data).catch(console.error);
     
     res.json({ message: 'Mata kuliah berhasil di-drop dari KRS.' });
   }));
