@@ -2,7 +2,7 @@
 
 ## 3.1 Requirement Gathering and Analysis
 
-Tahapan *requirement gathering* dilakukan untuk mengidentifikasi dan merumuskan kebutuhan sistem pertukaran jadwal (KRSwitch Barter System). Pengumpulan data difokuskan pada penyelesaian masalah ketidakcocokan jadwal kelas paralel mahasiswa. Sistem harus memfasilitasi pertukaran (*barter*) kelas antara dua pihak yang memiliki kebutuhan saling melengkapi, yang dieksekusi secara otomatis oleh sistem (*Auto-Match*).
+Tahapan *requirement gathering* dilakukan untuk mengidentifikasi dan merumuskan kebutuhan sistem pertukaran jadwal (KRSwitch Barter System). Kegiatan pengumpulan kebutuhan ini dilaksanakan melalui serangkaian diskusi kelompok, penyusunan *Software System Requirements (SSR)*, serta perumusan *Term of Reference (TOR)* di fase awal pengembangan. Pengumpulan data difokuskan pada penyelesaian masalah ketidakcocokan jadwal kelas paralel mahasiswa. Sistem harus memfasilitasi pertukaran (*barter*) kelas antara dua pihak yang memiliki kebutuhan saling melengkapi, yang dieksekusi secara otomatis oleh sistem (*Auto-Match*). Dokumen lengkap SSR dan TOR dilampirkan pada bagian lampiran laporan ini.
 
 ### 3.1.1 Use Case Diagram
 
@@ -153,35 +153,35 @@ partition "Transaksi 1: Validasi" {
 }
 :Emit Socket 'new-offer';
 note right: Broadcast ke Live Feed seluruh mahasiswa
-fork
-  :Kirim Response HTTP 201;
-  end
-fork again
-  :Background Process: Auto-Match;
-  partition "Transaksi 2: Auto-Match" {
-    :Cari penawaran berkebalikan;
-    if (Match eksak ada?) then (Ya)
-      if (Ada konflik jadwal?) then (Ya)
-        stop
-      else (Aman)
-        :Update kedua offer status -> 'matched';
-        :Swap Enrollment kelas;
-        :Batalkan penawaran usang (CancelStaleOffers);
-        note right: Membatalkan penawaran lama\nyang menjadi tidak valid
-      endif
-    else (Tidak)
-      stop
+partition "Transaksi 2: Auto-Match" {
+  :Panggil fungsi autoMatch();
+  :Cari penawaran berkebalikan;
+  if (Match eksak ada?) then (Ya)
+    if (Ada konflik jadwal?) then (Ya)
+      :Lewati (Tidak Match);
+    else (Aman)
+      :Update kedua offer status -> 'matched';
+      :Swap Enrollment kelas;
+      :Batalkan penawaran usang (CancelStaleOffers);
+      note right: Membatalkan penawaran lama\nyang menjadi tidak valid
     endif
-  }
-  :Transaksi 2 Commit;
+  else (Tidak)
+    :Lewati (Tidak Match);
+  endif
+}
+
+if (Match Berhasil?) then (Ya)
   fork
     :Emit Sockets (offer-taken, dll);
   fork again
-    :Kirim Email (Nodemailer);
+    :Kirim Email (Nodemailer) Asynchronous;
   end fork
-  :Log Aktivitas;
-  stop
-end fork
+else (Tidak)
+endif
+
+:Kirim Response HTTP 201;
+:Log Aktivitas;
+stop
 @enduml
 ```
 
@@ -237,6 +237,16 @@ else Jika Match Tidak Ditemukan
 end
 @enduml
 ```
+
+### 3.2.4 Desain Antarmuka (Lo-Fi & Hi-Fi)
+
+Untuk menjembatani alur logika sistem dengan pengalaman pengguna, dilakukan perancangan antarmuka awal berupa *Wireframe* (*Lo-Fi*) untuk memvalidasi tata letak komponen. Rancangan tersebut kemudian disempurnakan menjadi purwarupa interaktif (*Hi-Fi Prototype*) bernuansa modern menggunakan Figma.
+
+![Desain Lo-Fi Barter](./assets/placeholder_lofi.png)
+> **Gambar 3.X** Rancangan *Wireframe* (Lo-Fi) untuk *Live Feed* dan Form Barter.
+
+![Desain Hi-Fi Barter](./assets/placeholder_hifi.png)
+> **Gambar 3.Y** Desain Antarmuka Akhir (Hi-Fi) yang diimplementasikan pada aplikasi.
 
 ## 3.3 Implementasi
 
