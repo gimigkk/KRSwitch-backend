@@ -10,7 +10,6 @@ Berikut adalah Use Case Diagram untuk fitur utama Barter System:
 
 ```plantuml
 @startuml
-left to right direction
 skinparam packageStyle rectangle
 skinparam usecase {
   BackgroundColor LightBlue
@@ -78,6 +77,7 @@ Arsitektur logis untuk menopang sistem barter didesain menggunakan skema berorie
 
 ```plantuml
 @startuml
+left to right direction
 skinparam classAttributeIconSize 0
 
 class Pengguna {
