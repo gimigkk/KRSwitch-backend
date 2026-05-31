@@ -17,26 +17,37 @@ flowchart LR
 
     %% Use Cases
     UC1([Membuat Penawaran Barter])
+    UC1b([Mengambil Penawaran Manual])
     UC2([Melihat Live Barter Feed])
     UC3([Membatalkan Penawaran])
     UC4([Melihat Notifikasi Barter])
+    
     UC5([Proses Auto-Match])
     UC6([Membatalkan Penawaran Stale])
+    UC6b([Mencatat Aktivitas / Logging])
+    UC6c([Kirim Notif Email & WebSocket])
+
     UC7([Membatalkan Penawaran Barter])
-    UC8([Memantau Aktivitas Barter])
+    UC8([Mengubah Enrollment Mahasiswa])
+    UC9([Melakukan Override Swap])
 
     %% Relationships
     Mahasiswa --- UC1
+    Mahasiswa --- UC1b
     Mahasiswa --- UC2
     Mahasiswa --- UC3
     Mahasiswa --- UC4
 
     UC1 -. "<<include>>" .-> UC5
+    UC1b -. "<<include>>" .-> UC5
     Sistem --- UC5
     Sistem --- UC6
+    Sistem --- UC6b
+    Sistem --- UC6c
 
     Admin --- UC7
     Admin --- UC8
+    Admin --- UC9
 ```
 
 *(Catatan: Use case secara lengkap untuk modul sistem lainnya dapat dilihat pada bagian Lampiran).*
@@ -63,6 +74,7 @@ erDiagram
     User ||--o{ BarterOffer : "menawarkan (offerer)"
     User ||--o{ BarterOffer : "mengambil (taker)"
     User ||--o{ Notification : "menerima"
+    User ||--o{ ActivityLog : "melakukan (logical)"
     ParallelClass ||--o{ Enrollment : "berisi"
     ParallelClass ||--o{ BarterOffer : "kelas awal & tujuan"
 
@@ -75,9 +87,7 @@ erDiagram
     ParallelClass {
         Int id PK
         String courseCode
-        String courseName
         String classCode
-        String day
         String timeStart
         String timeEnd
     }
@@ -100,6 +110,13 @@ erDiagram
         String type
         Json data
     }
+    ActivityLog {
+        Int id PK
+        DateTime timestamp
+        String action_type
+        String user_nim
+        String details
+    }
 ```
 
 ### 3.2.2 Activity Diagram: Alur Pembuatan Barter & Auto-Match
@@ -108,35 +125,37 @@ Activity diagram di bawah mewakili alur logika utama saat penawaran dibuat dan s
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SubmitOffer: Mahasiswa submit penawaran
-    SubmitOffer --> CekKetersediaan: Sistem mencari penawaran berkebalikan
+    [*] --> SubmitOffer: User POST /api/offers
     
-    state CekKetersediaan {
+    state Transaksi_1_Validasi {
+        SubmitOffer --> PessimisticLock: Lock data user (FOR UPDATE)
+        PessimisticLock --> CekKepemilikanKelas
+        CekKepemilikanKelas --> CekBentrokJadwal
+        CekBentrokJadwal --> SimpanOffer: Status 'open'
+    }
+    
+    SimpanOffer --> EmitSocketNewOffer: Broadcast ke Live Feed
+    EmitSocketNewOffer --> Transaksi_2_AutoMatch: Background Process
+    
+    state Transaksi_2_AutoMatch {
         [*] --> CekDatabase
-        CekDatabase --> Ditemukan: Match ada
+        CekDatabase --> Ditemukan: Match eksak ada
         CekDatabase --> TidakDitemukan: Match tidak ada
+        
+        TidakDitemukan --> [*]: Biarkan status 'open'
+        
+        Ditemukan --> CekKonflikKeduaPihak
+        CekKonflikKeduaPihak --> [*]: Jika ada konflik jadwal (Batal)
+        CekKonflikKeduaPihak --> SwapEnrollment: Jika aman
+        SwapEnrollment --> UpdateStatusMatched
+        UpdateStatusMatched --> CancelStaleOffers: Batalkan offer usang
     }
     
-    CekKetersediaan --> CekKonflik: Jika Ditemukan
-    CekKetersediaan --> SimpanOpen: Jika Tidak Ditemukan
-    
-    state CekKonflik {
-        [*] --> VerifikasiJadwal
-        VerifikasiJadwal --> TanpaKonflik: Jadwal Aman
-        VerifikasiJadwal --> AdaKonflik: Terjadi Bentrok
-    }
-    
-    CekKonflik --> SimpanOpen: Jika Ada Konflik
-    CekKonflik --> TransaksiBarter: Jika Tanpa Konflik
-    
-    TransaksiBarter --> SwapEnrollment: Atomic Update
-    SwapEnrollment --> UpdateStatusMatched
-    UpdateStatusMatched --> CancelStaleOffers
-    CancelStaleOffers --> KirimNotifikasi
-    KirimNotifikasi --> [*]
-    
-    SimpanOpen --> StatusOpen: Penawaran disimpan (status 'open')
-    StatusOpen --> [*]
+    Transaksi_2_AutoMatch --> SuksesSwap: Transaksi 2 Commit
+    SuksesSwap --> EmitSockets: Broadcast offer-taken, dll
+    SuksesSwap --> KirimEmail: Nodemailer Asynchronous
+    EmitSockets --> LogAktivitas
+    LogAktivitas --> [*]
 ```
 
 ### 3.2.3 Sequence Diagram: Auto-Match Barter
@@ -146,34 +165,53 @@ Alur sistem komunikasi *client-server* untuk modul barter beserta interaksi *dat
 ```mermaid
 sequenceDiagram
     autonumber
-    actor M as Mahasiswa (Offerer)
+    actor M as Mahasiswa
     participant F as Frontend Client
-    participant C as OfferController (Backend)
-    participant DB as Database (Prisma)
-    participant N as Notification Service
+    participant C as OfferController
+    participant DB as Prisma (Database)
+    participant WS as Socket.IO (Server)
+    participant Mail as Nodemailer
 
     M->>F: Submit penawaran (myClassId, wantedClassId)
     F->>C: POST /api/offers
-    C->>DB: Cari penawaran berkebalikan (status: 'open')
     
-    alt Penawaran Ditemukan & Jadwal Tidak Konflik
-        C->>DB: Mulai Transaksi Database (Atomic)
-        DB->>DB: Update status kedua offer -> 'matched'
-        DB->>DB: Swap Enrollment (Update parallelClassId)
-        DB->>DB: Eksekusi cancelStaleOffers
-        C->>N: Buat Notifikasi (barter_auto_matched)
-        C-->>F: Response Success (Matched)
+    rect rgb(200, 220, 240)
+        Note right of C: Transaksi 1: Pembuatan Offer
+        C->>DB: Lock User (FOR UPDATE) & Validasi
+        C->>DB: Buat Offer baru (status: 'open')
+        C->>WS: io.emit('new-offer')
+        WS-->>F: Broadcast Live Feed
+    end
+    
+    C->>C: Panggil fungsi autoMatch()
+    
+    rect rgb(220, 240, 200)
+        Note right of C: Transaksi 2: Pertukaran (Atomic Swap)
+        C->>DB: Cari penawaran berkebalikan (status: 'open')
+        alt Match Ditemukan & Aman
+            DB->>DB: Update kedua offer -> 'matched'
+            DB->>DB: Swap Enrollment (Update parallelClassId)
+            DB->>DB: Eksekusi cancelStaleOffers
+            C->>DB: Buat Notification record
+        end
+    end
+    
+    alt Jika Match Berhasil
+        C->>WS: io.emit('offer-taken', 'enrollments-swapped')
+        C->>WS: io.to('user-room').emit('new-notification')
+        C->>Mail: sendNotificationEmail() (Async)
+        Mail-->>M: Email Diterima (Gmail)
+        C-->>F: HTTP 201 Created (Auto-Matched)
         F-->>M: Tampilkan Alert (Barter Berhasil)
-    else Tidak Ada Penawaran / Terjadi Konflik Jadwal
-        C->>DB: Simpan Offer Baru (status: 'open')
-        C-->>F: Response Success (Open)
+    else Jika Match Tidak Ditemukan
+        C-->>F: HTTP 201 Created (Open)
         F-->>M: Tampilkan Status (Menunggu Match)
     end
 ```
 
 ## 3.3 Implementasi
 
-Pada tahap implementasi, sistem barter dibangun dengan arsitektur modern (Next.js untuk *frontend* dan Express.js - Prisma ORM untuk *backend*). Perhatian utama ditujukan pada sistem konkurensi, demi mencegah terjadinya *race condition* ketika dua pengguna mencoba melakukan transaksi di waktu yang bersamaan.
+Pada tahap implementasi, sistem barter dibangun dengan arsitektur modern (React Vite untuk *frontend*, serta Express.js dengan Prisma ORM untuk *backend*). Infrastruktur *deployment* (VPS) menggunakan PM2 untuk menjaga proses *backend*, dan Nginx sebagai *Reverse Proxy* untuk melayani *static files frontend* sekaligus mengarahkan (*proxy pass*) lalu lintas API dan WebSocket. Perhatian utama di level aplikasi ditujukan pada sistem konkurensi, demi mencegah terjadinya *race condition* ketika dua pengguna mencoba melakukan transaksi barter di waktu yang bersamaan.
 
 ### 3.3.1 Penjelasan Fitur Auto-Match
 Fitur *Auto-Match* adalah *core logic* dari sistem ini. Ketika pengguna menawarkan jadwalnya, fungsi `autoMatch` akan dieksekusi. 
@@ -233,7 +271,10 @@ await Promise.all([
 ## 3.4 Integration & Testing
 
 ### 3.4.1 Proses Integrasi
-Integrasi antara antarmuka *frontend* dan *backend* dilakukan menggunakan dua jalur komunikasi utama: **RESTful API** untuk operasi standar (CRUD penawaran), dan **WebSocket (melalui Socket.IO)** untuk komunikasi data *real-time* dan asinkron. Mekanisme sinkronisasi menggunakan WebSocket memungkinkan *Live Barter Feed* & *Modal Notification* menerima *push events* dari *server* segera setelah proses *Auto-Match* berhasil, sehingga antarmuka selalu mendapatkan state data terbaru secara seketika (*real-time*) tanpa perlu me-*refresh* atau melakukan *polling* berkala ke *server*. Sistem juga dilengkapi manajemen koneksi (*multi-device limit* dan *authentication timeout*) untuk menjaga keamanan jalur WebSocket.
+Integrasi sistem KRSwitch bertumpu pada tiga pilar komunikasi utama:
+1. **RESTful API**: Digunakan untuk operasi standar klien (CRUD penawaran).
+2. **WebSocket (melalui Socket.IO)**: Digunakan untuk komunikasi asinkron *real-time*. *Live Barter Feed* & *Modal Notification* menerima *push events* dari *server* segera setelah *Auto-Match* berhasil, memperbarui *state* antarmuka tanpa perlu me-*refresh* halaman. Jalur ini diamankan dengan *multi-device limit* dan ditunjang oleh konfigurasi *Connection Upgrade* pada Nginx.
+3. **Email Notification (Nodemailer)**: Layanan latar belakang yang mengirimkan pesan rekap mutasi jadwal secara otomatis ke email mahasiswa apabila barter mereka berhasil ter-*match* atau ketika terdapat intervensi pembatalan dari Administrator.
 
 ### 3.4.2 Hasil Pengujian (Testing)
 Pengujian fungsional modul sistem barter dilakukan menggunakan dua pendekatan:
