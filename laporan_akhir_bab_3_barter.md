@@ -129,12 +129,21 @@ stateDiagram-v2
     
     state Transaksi_1_Validasi {
         SubmitOffer --> PessimisticLock: Lock data user (FOR UPDATE)
+        note right of PessimisticLock
+            Mencegah spam/race condition
+        end note
+        
         PessimisticLock --> CekKepemilikanKelas
         CekKepemilikanKelas --> CekBentrokJadwal
         CekBentrokJadwal --> SimpanOffer: Status 'open'
     }
     
     SimpanOffer --> EmitSocketNewOffer: Broadcast ke Live Feed
+    note right of EmitSocketNewOffer
+        Broadcast WebSocket ke semua
+        mahasiswa untuk update UI
+    end note
+    
     EmitSocketNewOffer --> Transaksi_2_AutoMatch: Background Process
     
     state Transaksi_2_AutoMatch {
@@ -149,6 +158,10 @@ stateDiagram-v2
         CekKonflikKeduaPihak --> SwapEnrollment: Jika aman
         SwapEnrollment --> UpdateStatusMatched
         UpdateStatusMatched --> CancelStaleOffers: Batalkan offer usang
+        note right of CancelStaleOffers
+            Membatalkan penawaran lama
+            yang menjadi tidak valid
+        end note
     }
     
     Transaksi_2_AutoMatch --> SuksesSwap: Transaksi 2 Commit
@@ -180,6 +193,7 @@ sequenceDiagram
         C->>DB: Lock User (FOR UPDATE) & Validasi
         C->>DB: Buat Offer baru (status: 'open')
         C->>WS: io.emit('new-offer')
+        Note right of WS: Menyiarkan event ke<br/>seluruh pengguna aktif
         WS-->>F: Broadcast Live Feed
     end
     
@@ -199,7 +213,9 @@ sequenceDiagram
     alt Jika Match Berhasil
         C->>WS: io.emit('offer-taken', 'enrollments-swapped')
         C->>WS: io.to('user-room').emit('new-notification')
+        Note right of WS: Mengirim event secara privat<br/>hanya ke target mahasiswa
         C->>Mail: sendNotificationEmail() (Async)
+        Note right of Mail: Eksekusi Background<br/>(tanpa memblokir respon HTTP)
         Mail-->>M: Email Diterima (Gmail)
         C-->>F: HTTP 201 Created (Auto-Matched)
         F-->>M: Tampilkan Alert (Barter Berhasil)
