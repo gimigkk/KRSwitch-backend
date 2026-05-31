@@ -233,7 +233,7 @@ await Promise.all([
 ## 3.4 Integration & Testing
 
 ### 3.4.1 Proses Integrasi
-Integrasi antara antarmuka *frontend* dan *backend* dilakukan menggunakan RESTful API. Mekanisme sinkronisasi *state management* pada klien (*Live Barter Feed* & *Modal*) diatur sehingga setelah suatu proses barter berhasil (*Auto-Match* terjadi), UI memunculkan *floating notification* (waktu tampil 4 detik) dan me-*refresh* data yang berkaitan di halaman tersebut secara *real-time* tanpa mengharuskan muat ulang (refresh) halaman secara penuh.
+Integrasi antara antarmuka *frontend* dan *backend* dilakukan menggunakan dua jalur komunikasi utama: **RESTful API** untuk operasi standar (CRUD penawaran), dan **WebSocket (melalui Socket.IO)** untuk komunikasi data *real-time* dan asinkron. Mekanisme sinkronisasi menggunakan WebSocket memungkinkan *Live Barter Feed* & *Modal Notification* menerima *push events* dari *server* segera setelah proses *Auto-Match* berhasil, sehingga antarmuka selalu mendapatkan state data terbaru secara seketika (*real-time*) tanpa perlu me-*refresh* atau melakukan *polling* berkala ke *server*. Sistem juga dilengkapi manajemen koneksi (*multi-device limit* dan *authentication timeout*) untuk menjaga keamanan jalur WebSocket.
 
 ### 3.4.2 Hasil Pengujian (Testing)
 Pengujian fungsional modul sistem barter dilakukan menggunakan dua pendekatan:
