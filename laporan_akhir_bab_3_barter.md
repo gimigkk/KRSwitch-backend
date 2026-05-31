@@ -9,22 +9,34 @@ Tahapan *requirement gathering* dilakukan untuk mengidentifikasi dan merumuskan 
 Berikut adalah Use Case Diagram untuk fitur utama Barter System:
 
 ```mermaid
-usecaseDiagram
-    actor Mahasiswa as "Mahasiswa"
-    actor Admin as "Admin"
-    actor Sistem as "Sistem KRSwitch"
+flowchart LR
+    %% Actors
+    Mahasiswa((Mahasiswa))
+    Admin((Admin))
+    Sistem((Sistem KRSwitch))
 
-    Mahasiswa --> (Membuat Penawaran Barter)
-    Mahasiswa --> (Melihat Live Barter Feed)
-    Mahasiswa --> (Membatalkan Penawaran)
-    Mahasiswa --> (Melihat Notifikasi Barter)
+    %% Use Cases
+    UC1([Membuat Penawaran Barter])
+    UC2([Melihat Live Barter Feed])
+    UC3([Membatalkan Penawaran])
+    UC4([Melihat Notifikasi Barter])
+    UC5([Proses Auto-Match])
+    UC6([Membatalkan Penawaran Stale])
+    UC7([Membatalkan Penawaran Barter])
+    UC8([Memantau Aktivitas Barter])
 
-    (Membuat Penawaran Barter) .-> (Proses Auto-Match) : include
-    Sistem --> (Proses Auto-Match)
-    Sistem --> (Membatalkan Penawaran Stale)
-    
-    Admin --> (Membatalkan Penawaran Barter)
-    Admin --> (Memantau Aktivitas Barter)
+    %% Relationships
+    Mahasiswa --- UC1
+    Mahasiswa --- UC2
+    Mahasiswa --- UC3
+    Mahasiswa --- UC4
+
+    UC1 -. "<<include>>" .-> UC5
+    Sistem --- UC5
+    Sistem --- UC6
+
+    Admin --- UC7
+    Admin --- UC8
 ```
 
 *(Catatan: Use case secara lengkap untuk modul sistem lainnya dapat dilihat pada bagian Lampiran).*
