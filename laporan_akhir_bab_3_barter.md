@@ -188,7 +188,7 @@ sequenceDiagram
     M->>F: Submit penawaran (myClassId, wantedClassId)
     F->>C: POST /api/offers
     
-    rect rgb(200, 220, 240)
+    rect rgba(0, 150, 255, 0.15)
         Note right of C: Transaksi 1: Pembuatan Offer
         C->>DB: Lock User (FOR UPDATE) & Validasi
         C->>DB: Buat Offer baru (status: 'open')
@@ -199,7 +199,7 @@ sequenceDiagram
     
     C->>C: Panggil fungsi autoMatch()
     
-    rect rgb(220, 240, 200)
+    rect rgba(0, 255, 100, 0.15)
         Note right of C: Transaksi 2: Pertukaran (Atomic Swap)
         C->>DB: Cari penawaran berkebalikan (status: 'open')
         alt Match Ditemukan & Aman
