@@ -10,6 +10,7 @@ Berikut adalah Use Case Diagram untuk fitur utama Barter System:
 
 ```plantuml
 @startuml
+left to right direction
 skinparam packageStyle rectangle
 skinparam usecase {
   BackgroundColor LightBlue
@@ -46,14 +47,14 @@ mhs --> UC4
 UC1 ..> UC5 : <<include>>
 UC1b ..> UC5 : <<include>>
 
-sys --> UC5
-sys --> UC6
-sys --> UC6b
-sys --> UC6c
+UC5 <-- sys
+UC6 <-- sys
+UC6b <-- sys
+UC6c <-- sys
 
-adm --> UC7
-adm --> UC8
-adm --> UC9
+UC7 <-- adm
+UC8 <-- adm
+UC9 <-- adm
 @enduml
 ```
 
@@ -377,14 +378,69 @@ sendNotificationEmail(
 > **Gambar 3.6** Potongan kode pengiriman pesan Socket.IO dan Nodemailer.
 
 Berdasarkan Gambar 3.6, `io.emit()` menyiarkan pembaruan data ke *Live Feed* seluruh pengguna, sedangkan `io.to('user-room').emit()` mengirim notifikasi privat hanya ke kedua mahasiswa yang terlibat. Fungsi `sendNotificationEmail()` dipanggil dengan `.catch()` tanpa `await`, artinya proses pengiriman surel berjalan di latar belakang tanpa menahan respon API yang sudah dikirimkan ke pengguna.
+### 3.3.4 Fitur Administrator (Manajemen Sistem & Intervensi)
+
+Sistem KRSwitch dilengkapi dengan dasbor Administrator yang berfungsi sebagai lapisan kontrol utama (*core system*) untuk mengelola anomali dan keluhan mahasiswa. Admin memiliki hak istimewa untuk melakukan intervensi langsung terhadap siklus hidup pertukaran kelas.
+- **Tanggung Jawab**: *Backend Developer* (Admin API & Atomic Transaction) dan *Frontend Developer* (Admin Dashboard UI).
+
+![Tampilan Dashboard Admin - Override Swap](./assets/placeholder_admin_override_ui.png)
+> **Gambar 3.7** Tampilan dasbor Administrator untuk melakukan Override Swap dan Manajemen Barter.
+
+Dua fungsi intervensi paling kritikal yang dimiliki Administrator adalah:
+1. **Force Cancel Offer**: Admin dapat membatalkan penawaran (*offer*) aktif milik mahasiswa kapan saja (misal: karena melanggar aturan). Sistem akan secara otomatis menyiarkan (*broadcast*) notifikasi pembatalan ini ke klien melalui WebSocket.
+2. **Override Swap (Pertukaran Paksa)**: Admin dapat secara sepihak memutarbalikkan kelas (*enrollment*) antara dua mahasiswa tanpa memerlukan penawaran *barter* yang cocok dari mahasiswa bersangkutan. Fitur ini menggunakan *Atomic Transaction* untuk memastikan data kelas terganti secara absolut dan membatalkan semua penawaran usang yang terkait dengan kelas tersebut.
+3. **Manajemen Master Data (Import & Export CSV)**: Admin memiliki kemampuan untuk melakukan inisialisasi basis data secara masif melalui fitur *upload* berkas `.csv` (Data Mahasiswa dan Data Jadwal Kelas), yang divalidasi dan diproses secara efisien menggunakan pustaka `csv-parser`. Admin juga dapat mengekspor rekap jadwal terkini untuk sinkronisasi dengan sistem akademik (SIAK).
+
+![Tampilan Interface Upload CSV](./assets/placeholder_admin_import_csv.png)
+> **Gambar 3.7b** Tampilan antarmuka *Dashboard* Admin untuk fitur *Import/Export* Data Master CSV.
+4. **Data Randomization (Simulasi Bentrok Massal)**: Terdapat fungsi khusus `randomizeEnrollments()` yang berfungsi untuk mengacak secara massal pendaftaran kelas (KRS) seluruh mahasiswa. Fitur ini sangat krusial sebagai alat simulasi (*stress-testing*) untuk menguji ketangguhan algoritma *Auto-Match* di kondisi ekstrim tanpa harus bergantung pada skrip *dev seeding* manual.
+5. **Dashboard Manajemen Mahasiswa Terpadu**: Antarmuka (*frontend*) Administrator menyediakan panel kontrol terpusat untuk memantau aktivitas tiap entitas mahasiswa yang terbagi ke dalam empat sub-modul (tab) interaktif:
+   - **Tab KRS**: Modul untuk memantau seluruh kelas paralel (*enrollments*) yang sedang diambil mahasiswa.
+   - **Tab Barter**: Modul untuk memantau riwayat dan status penawaran barter milik mahasiswa.
+   - **Tab Override**: Antarmuka pengeksekusi fungsi *Force Swap* (seperti yang telah dijelaskan di poin 2).
+   - **Tab Akun**: Modul administratif untuk memantau informasi profil profil pengguna.
+
+![Tampilan Interface 4 Tab Mahasiswa](./assets/placeholder_admin_4_tabs.png)
+> **Gambar 3.7c** Tampilan antarmuka *Dashboard* Admin untuk Panel Manajemen Mahasiswa (KRS, Barter, Override, Akun).
+
+```typescript
+// Kode: routes/admin/override.ts - Transaksi Pertukaran Paksa (Override Swap)
+const [updated1, updated2] = await prisma.$transaction([
+  prisma.enrollment.update({
+    where: { id: enroll1.id },
+    data: { parallelClassId: enroll2.parallelClassId },
+  }),
+  prisma.enrollment.update({
+    where: { id: enroll2.id },
+    data: { parallelClassId: enroll1.parallelClassId },
+  }),
+]);
+
+// Membatalkan penawaran aktif (stale) yang menjadi tidak relevan akibat override
+await prisma.barterOffer.updateMany({
+  where: { id: { in: staleOffers.map(o => o.id) } },
+  data: { status: 'cancelled' },
+});
+
+// Mencatat aktivitas kritis admin ke dalam Audit Log
+await logActivity(
+  'ADMIN_OVERRIDE_SWAP', 
+  req.user.nim, 
+  `FORCED SWAP: ${u1.name} <-> ${u2.name} for course ${courseCode}.`
+);
+```
+> **Gambar 3.8** Potongan kode eksekusi *Override Swap* dan *Audit Logging* oleh Administrator.
+
+Berdasarkan Gambar 3.8, aksi mutasi paksa ini dilindungi oleh blok `prisma.$transaction`. Selain memanipulasi kepemilikan kelas, sistem juga wajib memanggil fungsi `logActivity()` untuk menyimpan *Audit Trail*, memastikan setiap intervensi manual oleh Admin terekam secara persisten untuk transparansi.
 
 ## 3.4 Integration & Testing
 
 ### 3.4.1 Proses Integrasi
-Integrasi sistem KRSwitch bertumpu pada tiga pilar komunikasi utama:
-1. **RESTful API**: Digunakan untuk operasi standar klien (CRUD penawaran).
-2. **WebSocket (melalui Socket.IO)**: Digunakan untuk komunikasi asinkron *real-time*. *Live Barter Feed* & *Modal Notification* menerima *push events* dari *server* segera setelah *Auto-Match* berhasil, memperbarui *state* antarmuka tanpa perlu me-*refresh* halaman. Jalur ini diamankan dengan *multi-device limit* dan ditunjang oleh konfigurasi *Connection Upgrade* pada Nginx.
-3. **Email Notification (Nodemailer)**: Layanan latar belakang yang mengirimkan pesan rekap mutasi jadwal secara otomatis ke email mahasiswa apabila barter mereka berhasil ter-*match* atau ketika terdapat intervensi pembatalan dari Administrator.
+
+Integrasi sistem KRSwitch dirancang dengan pola *Client-Server* modern yang menghubungkan tiga lapisan arsitektur utama:
+1. **Frontend ke Backend (React Vite → Express.js)**: Integrasi antarmuka klien dengan *server* dilakukan menggunakan dua jalur komunikasi utama. Jalur pertama adalah **RESTful API** berbasis HTTP untuk operasi pengiriman form penawaran secara sinkron. Jalur kedua adalah **WebSocket (Socket.IO)** yang membuka koneksi *two-way* agar *frontend* bisa menerima kejadian (*event*) secara *real-time* (seperti pembaruan *Live Feed* setelah *Auto-Match* terjadi) tanpa perlu memuat ulang (*refresh*) halaman.
+2. **Backend ke Database (Express.js → PostgreSQL)**: Sistem *backend* berintegrasi dengan basis data relasional PostgreSQL melalui **Prisma ORM**. Integrasi di lapisan ini sangat krusial karena memanfaatkan mekanisme penguncian pesimistis (*Pessimistic Locking*) dan *Atomic Transactions* (`prisma.$transaction`) untuk memastikan tidak terjadi duplikasi kepemilikan kelas jika ada permintaan barter yang masuk bersamaan di satu waktu.
+3. **Backend ke External Services (Nodemailer)**: Terakhir, sistem *backend* diintegrasikan dengan *server* SMTP menggunakan Nodemailer untuk menjalankan *background job* pengiriman notifikasi email secara asinkron tanpa mengganggu performa *response time* dari API utama.
 
 ### 3.4.2 Hasil Pengujian (Testing)
 Pengujian fungsional modul sistem barter dilakukan menggunakan dua pendekatan:
@@ -393,3 +449,5 @@ Pengujian fungsional modul sistem barter dilakukan menggunakan dua pendekatan:
 
 - **Alamat URL (*Staging/Production*):** `[ISI DENGAN URL DEPLOYMENT JIKA ADA, MISAL: https://krswitch.app]`
 - **Hasil Pengujian:** Seluruh *test case* untuk alur fungsional barter auto-match dikonfirmasi **PASSED**. Sistem terbukti andal dalam menyelesaikan logika konkurensi *(race condition)* tanpa merusak integritas *database*, dan notifikasi asinkron berjalan sesuai logika pembatalan *stale offer*.
+
+
