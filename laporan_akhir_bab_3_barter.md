@@ -378,6 +378,7 @@ sendNotificationEmail(
 > **Gambar 3.6** Potongan kode pengiriman pesan Socket.IO dan Nodemailer.
 
 Berdasarkan Gambar 3.6, `io.emit()` menyiarkan pembaruan data ke *Live Feed* seluruh pengguna, sedangkan `io.to('user-room').emit()` mengirim notifikasi privat hanya ke kedua mahasiswa yang terlibat. Fungsi `sendNotificationEmail()` dipanggil dengan `.catch()` tanpa `await`, artinya proses pengiriman surel berjalan di latar belakang tanpa menahan respon API yang sudah dikirimkan ke pengguna.
+
 ### 3.3.4 Fitur Administrator (Manajemen Sistem & Intervensi)
 
 Sistem KRSwitch dilengkapi dengan dasbor Administrator yang berfungsi sebagai lapisan kontrol utama (*core system*) untuk mengelola anomali dan keluhan mahasiswa. Admin memiliki hak istimewa untuk melakukan intervensi langsung terhadap siklus hidup pertukaran kelas.
