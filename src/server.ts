@@ -53,8 +53,8 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
 const isProd = process.env.NODE_ENV === 'production';
-const apiLimiter  = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 200  : 1000, standardHeaders: true, legacyHeaders: false });
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 30   : 100,  standardHeaders: true, legacyHeaders: false });
+const apiLimiter  = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 5000 : 1000, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: isProd ? 300  : 100,  standardHeaders: true, legacyHeaders: false });
 app.use('/api/', apiLimiter);
 app.use('/auth/', authLimiter);
 app.use(trustedOriginBypass);

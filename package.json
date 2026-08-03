@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "seed:barter": "node barter-seed.js"
+    "seed:barter": "node barter-seed.js",
+    "import:live": "ts-node src/import-live-data.ts"
   },
   "repository": {
     "type": "git",
@@ -36,6 +37,7 @@
     "cors": "^2.8.6",
     "csrf-csrf": "^4.0.3",
     "csv-parser": "^3.2.0",
+    "csv-writer": "^1.6.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
