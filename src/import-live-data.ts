@@ -69,9 +69,9 @@ async function main() {
   
       if (!nim || !name) continue;
   
-      // Use Email column if provided, otherwise fallback to nim email
+      // Use Email column if provided, otherwise skip the user
       const emailRaw = row['Email Mahasiswa'] || row['Email'] || row['email'] || row['EMAIL'];
-      const email = emailRaw?.trim() || `${nim.toLowerCase()}@apps.ipb.ac.id`;
+      const email = emailRaw?.trim();
   
       if (!email) {
         console.warn(`[WARNING] Missing email for NIM ${nim}. Skipping user.`);
