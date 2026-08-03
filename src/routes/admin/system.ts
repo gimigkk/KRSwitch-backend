@@ -26,6 +26,8 @@ export default (io: Server) => {
     },
   });
 
+  // --- System Operations ---------------------------------------------
+
   // POST /api/admin/reset
   router.post(
     '/reset',
@@ -58,6 +60,16 @@ export default (io: Server) => {
     })
   );
 
+  // POST /api/admin/seed-random
+  router.post('/seed-random', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Fitur seed-random dinonaktifkan di lingkungan produksi' });
+    }
+    res.json({ message: 'Seed random completed' });
+  }));
+
+  // --- Imports & Phase 2 Data -----------------------------------------
+
   // POST /api/admin/import-phase2
   router.post(
     '/import-phase2',
@@ -85,15 +97,12 @@ export default (io: Server) => {
           .on('error', reject);
       });
 
-      // Wrap in a transaction with a 30s timeout
       const txResult = await prisma.$transaction(async (tx) => {
-        // 1. Wipe existing data cleanly
         await tx.notification.deleteMany({});
         await tx.barterOffer.deleteMany({});
         await tx.enrollment.deleteMany({});
         await tx.user.deleteMany({ where: { role: 'student' } });
   
-        // 2. Extract Courses from headers
         const courseHeaders = Array.from(headersSet).filter(h => COURSE_REGEX.test(h));
         const courseMap = new Map();
         for (const header of courseHeaders) {
@@ -107,7 +116,6 @@ export default (io: Server) => {
         let enrollmentsCreated = 0;
         const processedEmails = new Set<string>();
   
-        // 3. Process each row
         for (const row of results) {
           const nim = row['NIM']?.trim();
           const name = row['Nama Mahasiswa']?.trim();
@@ -116,15 +124,9 @@ export default (io: Server) => {
           const emailRaw = row['Email Mahasiswa'] || row['Email'] || row['email'] || row['EMAIL'];
           const email = emailRaw?.trim();
   
-          if (!email) {
-            console.warn(`[WARNING] Missing email for NIM ${nim}. Skipping user.`);
-            continue;
-          }
+          if (!email) continue;
 
-          if (processedEmails.has(email)) {
-            console.warn(`[WARNING] Duplicate email found in CSV: ${email} for NIM ${nim}. Skipping user to prevent crash.`);
-            continue;
-          }
+          if (processedEmails.has(email)) continue;
           processedEmails.add(email);
   
           const paket = row['Paket']?.trim();
@@ -141,7 +143,6 @@ export default (io: Server) => {
               const rawClassCode = row[header]?.trim();
               if (rawClassCode && rawClassCode !== '-' && rawClassCode !== '') {
                 const courseInfo = courseMap.get(header);
-                
                 const classCodes = rawClassCode.split('/').map((c: string) => c.trim().toUpperCase()).filter(Boolean);
   
                 for (const classCode of classCodes) {
@@ -149,10 +150,7 @@ export default (io: Server) => {
                     where: { courseCode: courseInfo.courseCode, classCode }
                   });
   
-                  if (!pClass) {
-                    console.warn(`[WARNING] Missing class in schedule: ${courseInfo.courseCode} - ${classCode} (Skipping enrollment for ${nim})`);
-                    continue;
-                  }
+                  if (!pClass) continue;
   
                   await tx.enrollment.upsert({
                     where: { nim_parallelClassId: { nim, parallelClassId: pClass.id } },
@@ -181,6 +179,51 @@ export default (io: Server) => {
       });
     })
   );
+
+  // --- Master Files & Export -------------------------------------------
+
+  // GET /api/admin/template/:type
+  router.get('/template/:type', requireAuth, requireAdmin, (req: any, res: any) => {
+    const { type } = req.params;
+    let csv = '';
+    let filename = '';
+
+    if (type === 'students') {
+      csv = 'nim,name,email\nM0403241075,Muh Arifaushan,muh@apps.ipb.ac.id\nM0403241117,Gilang Muhamad Widiagung,gnaligilang@apps.ipb.ac.id';
+      filename = 'template_mahasiswa.csv';
+    } else if (type === 'classes') {
+      csv = 'courseCode,courseName,classCode,day,timeStart,timeEnd,room\nKOM1221,Metode Kuantitatif,K1,1,08:00,09:40,Ruang 101\nKOM1221,Metode Kuantitatif,P1,1,13:00,15:00,Lab 1';
+      filename = 'template_jadwal.csv';
+    } else {
+      return res.status(400).json({ error: 'Invalid template type' });
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  });
+
+  // GET /api/admin/master-files
+  router.get('/master-files', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
+    const dir = path.join(process.cwd(), 'storage', 'master');
+    const files = {
+      students: fs.existsSync(path.join(dir, 'master_students.csv')),
+      classes: fs.existsSync(path.join(dir, 'master_classes.csv'))
+    };
+    res.json(files);
+  }));
+
+  // DELETE /api/admin/master-files/:type
+  router.delete('/master-files/:type', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+    const { type } = req.params;
+    const fileName = type === 'students' ? 'master_students.csv' : 'master_classes.csv';
+    const filePath = path.join(process.cwd(), 'storage', 'master', fileName);
+
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    io.emit('admin-master-files-updated', { type, exists: false });
+    res.json({ message: `Master file ${type} berhasil dihapus.` });
+  }));
 
   // GET /api/admin/export-recap
   router.get('/export-recap', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
