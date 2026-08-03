@@ -6,6 +6,7 @@ const buildModelMock = () => {
     findFirst:  vi.fn(),
     findUnique: vi.fn(),
     create:     vi.fn(),
+    createMany: vi.fn(),
     update:     vi.fn(),
     updateMany: vi.fn(),
     delete:     vi.fn(),

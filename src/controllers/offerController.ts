@@ -10,8 +10,17 @@ export const createOfferSchema = z.object({
   message: 'Cannot swap same class',
 });
 
+export const createPickDropOfferSchema = z.object({
+  myClassId: z.number().int().positive(),
+  reservedForNim: z.string().regex(/^M\d{10}$/).optional().or(z.literal('')),
+});
+
 export const takeOfferSchema = z.object({
   takerNim: z.string().regex(/^M\d{10}$/),
+});
+
+export const claimPickDropOfferSchema = z.object({
+  claimerNim: z.string().regex(/^M\d{10}$/),
 });
 
 const staleCancelledOfferSchema = z.object({

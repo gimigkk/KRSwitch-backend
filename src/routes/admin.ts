@@ -28,7 +28,7 @@ router.get('/api/me', requireAuth, (req: any, res) => {
 });
 
 router.get('/api/users', requireAuth, asyncHandler(async (_req: any, res: any) => {
-  const users = await prisma.user.findMany({ select: { nim: true, name: true, email: true, picture: true } });
+  const users = await prisma.user.findMany({ select: { nim: true, name: true, email: true, picture: true, role: true } });
   res.json(users);
 }));
 

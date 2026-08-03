@@ -15,6 +15,7 @@ model User {
   picture        String?
   offeredBarters BarterOffer[]  @relation("Offerer")
   takenBarters   BarterOffer[]  @relation("Taker")
+  reservedOffers BarterOffer[]  @relation("ReservedFor")
   enrollments    Enrollment[]
   notifications  Notification[]
 
@@ -49,20 +50,25 @@ model Enrollment {
 }
 
 model BarterOffer {
-  id            Int           @id @default(autoincrement())
-  offererNim    String
-  myClassId     Int
-  wantedClassId Int
-  status        String        @default("open")
-  createdAt     DateTime      @default(now())
-  takerNim      String?
-  completedAt   DateTime?
-  myClass       ParallelClass @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)
-  offerer       User          @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
-  taker         User?         @relation("Taker", fields: [takerNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
-  wantedClass   ParallelClass @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
+  id              Int           @id @default(autoincrement())
+  offererNim      String
+  myClassId       Int
+  wantedClassId   Int?
+  type            String        @default("swap")     // "swap" | "pick_drop"
+  reservedForNim  String?
+  status          String        @default("open")
+  createdAt       DateTime      @default(now())
+  takerNim        String?
+  completedAt     DateTime?
+  myClass         ParallelClass @relation("MyClass", fields: [myClassId], references: [id], onDelete: Cascade)
+  offerer         User          @relation("Offerer", fields: [offererNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
+  taker           User?         @relation("Taker", fields: [takerNim], references: [nim], onDelete: Cascade, onUpdate: Cascade)
+  wantedClass     ParallelClass? @relation("WantedClass", fields: [wantedClassId], references: [id], onDelete: Cascade)
+  reservedFor     User?          @relation("ReservedFor", fields: [reservedForNim], references: [nim], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([status])
+  @@index([type, status])
+  @@index([reservedForNim])
   @@index([offererNim])
   @@index([takerNim])
   @@index([myClassId])
