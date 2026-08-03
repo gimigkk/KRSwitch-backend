@@ -533,6 +533,7 @@ describe('POST /api/offers/pick-drop', () => {
       if (args.where?.email === takerUser.email || args.where?.nim === TAKER_NIM) return takerUser as any;
       return { isActive: true } as any;
     });
+    vi.mocked(prisma.enrollment.findMany).mockResolvedValue([]);
     vi.mocked(prisma.barterOffer.create).mockResolvedValue(createdOffer as any);
 
     const res = await request(app)
@@ -611,6 +612,34 @@ describe('POST /api/offers/pick-drop', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/sudah terdaftar/i);
+  });
+
+  it('returns 400 when targeted student has a schedule conflict with the course package', async () => {
+    vi.mocked(prisma.enrollment.findFirst)
+      .mockResolvedValueOnce({ nim: OFFERER_NIM, parallelClassId: classA.id } as any)
+      .mockResolvedValueOnce(null);
+
+    vi.mocked(prisma.barterOffer.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.parallelClass.findUnique).mockResolvedValue(classA as any);
+    vi.mocked(prisma.user.findUnique).mockImplementation(async (args: any) => {
+      if (args.where?.email === offererUser.email || args.where?.nim === OFFERER_NIM) return offererUser as any;
+      if (args.where?.email === takerUser.email || args.where?.nim === TAKER_NIM) return takerUser as any;
+      return { isActive: true } as any;
+    });
+
+    const conflictingClass = { id: 99, courseCode: 'CS102', classCode: 'K01', day: 'Monday', timeStart: '08:00', timeEnd: '10:00' };
+    
+    vi.mocked(prisma.enrollment.findMany)
+      .mockResolvedValueOnce([{ id: 1, nim: OFFERER_NIM, parallelClassId: classA.id, parallelClass: classA }] as any) // offererEnrollments
+      .mockResolvedValueOnce([{ id: 2, nim: TAKER_NIM, parallelClassId: conflictingClass.id, parallelClass: conflictingClass }] as any); // targetOtherEnrollments
+
+    const res = await request(app)
+      .post('/api/offers/pick-drop')
+      .set('Cookie', authCookie())
+      .send(validTargetedBody);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/bertabrakan dengan jadwal/i);
   });
 });
 

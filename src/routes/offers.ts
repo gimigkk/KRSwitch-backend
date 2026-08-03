@@ -279,6 +279,21 @@ export function createOffersRouter(io: Server) {
           if (targetEnrollment) {
             throw new Error(`Mahasiswa ${targetUser.name} (${targetNim}) sudah terdaftar di matkul ${myClass.courseCode}`);
           }
+
+          const offererEnrollments = await tx.enrollment.findMany({
+            where: { nim: offererNim, parallelClass: { courseCode: myClass.courseCode } },
+            include: { parallelClass: true }
+          });
+          const targetOtherEnrollments = await getUserEnrollmentsExcluding(targetNim, 0, tx);
+
+          for (const enr of offererEnrollments) {
+            const conflict = targetOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, enr.parallelClass));
+            if (conflict) {
+              throw new Error(
+                `Gagal: Paket ${enr.parallelClass.courseCode}-${enr.parallelClass.classCode} bertabrakan dengan jadwal ${targetUser.name} di kelas ${conflict.parallelClass.courseCode}-${conflict.parallelClass.classCode} (${conflict.parallelClass.day})`
+              );
+            }
+          }
         }
 
         const newOffer = await tx.barterOffer.create({
