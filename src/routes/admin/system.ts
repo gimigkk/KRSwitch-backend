@@ -114,7 +114,7 @@ export default (io: Server) => {
           if (!nim || !name) continue;
   
           const emailRaw = row['Email Mahasiswa'] || row['Email'] || row['email'] || row['EMAIL'];
-          const email = emailRaw?.trim();
+          const email = emailRaw?.trim() || `${nim.toLowerCase()}@apps.ipb.ac.id`;
   
           if (!email) {
             console.warn(`[WARNING] Missing email for NIM ${nim}. Skipping user.`);
