@@ -55,6 +55,7 @@ model BarterOffer {
   myClassId       Int
   wantedClassId   Int?
   type            String        @default("swap")     // "swap" | "pick_drop"
+  batchGroupId    String?       // UUID linking batch offers together
   reservedForNim  String?
   status          String        @default("open")
   createdAt       DateTime      @default(now())
@@ -73,6 +74,7 @@ model BarterOffer {
   @@index([takerNim])
   @@index([myClassId])
   @@index([wantedClassId])
+  @@index([batchGroupId])
   @@map("barter_offers")
 }
 

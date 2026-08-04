@@ -145,7 +145,7 @@ describe('Barter System Start/Stop Toggle Integration Tests', () => {
     const resDelete = await request(app)
       .delete('/api/offers/1')
       .set('Cookie', authCookie(studentUser));
-
+    if (resDelete.status !== 200) console.error('DELETE ERROR:', resDelete.body);
     expect(resDelete.status).toBe(200);
     expect(resDelete.body.message).toBe('Offer cancelled');
   });

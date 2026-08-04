@@ -10,6 +10,17 @@ export const createOfferSchema = z.object({
   message: 'Cannot swap same class',
 });
 
+export const createBatchOfferSchema = z.object({
+  offers: z.array(
+    z.object({
+      myClassId: z.number().int().positive(),
+      wantedClassId: z.number().int().positive(),
+    }).refine(data => data.myClassId !== data.wantedClassId, {
+      message: 'Cannot swap same class',
+    })
+  ).min(1, 'Minimal 1 penawaran').max(15, 'Maksimal 15 penawaran sekaligus'),
+});
+
 export const createPickDropOfferSchema = z.object({
   myClassId: z.number().int().positive(),
   reservedForNim: z.string().regex(/^M\d{10}$/).optional().or(z.literal('')),
@@ -155,28 +166,54 @@ export async function cancelStaleOffers(
   });
 
   const cancelled: StaleCancelledOffer[] = [];
+  const processedBatchGroupIds = new Set<string>();
 
   for (const offer of openOffers) {
+    // Skip if already cancelled as part of a batch
+    if (cancelled.some(c => c.offerId === offer.id)) continue;
+
+    let shouldCancel = false;
+    let cancelReason: 'no_longer_enrolled' | 'schedule_conflict' = 'no_longer_enrolled';
+    let conflictingClassStr: string | undefined;
+
     if (offer.myClassId === lostClassId) {
-      await tx.barterOffer.update({ where: { id: offer.id }, data: { status: 'cancelled' } });
-      cancelled.push({ offerId: offer.id, reason: 'no_longer_enrolled', myClassId: offer.myClassId, wantedClassId: offer.wantedClassId });
-      continue;
+      shouldCancel = true;
+      cancelReason = 'no_longer_enrolled';
+    } else {
+      const scheduleWithoutMyClass = newSchedule.filter(c => c.id !== offer.myClassId);
+      const conflict = scheduleWithoutMyClass.find(c => hasScheduleConflict(c, offer.wantedClass));
+      if (conflict) {
+        shouldCancel = true;
+        cancelReason = 'schedule_conflict';
+        conflictingClassStr = `${conflict.courseCode}-${conflict.classCode}`;
+      }
     }
 
-    // We must EXCLUDE the myClass of THIS offer from the conflict check,
-    // because if this offer is accepted, myClass will be dropped anyway.
-    const scheduleWithoutMyClass = newSchedule.filter(c => c.id !== offer.myClassId);
-    
-    const conflict = scheduleWithoutMyClass.find(c => hasScheduleConflict(c, offer.wantedClass));
-    if (conflict) {
-      await tx.barterOffer.update({ where: { id: offer.id }, data: { status: 'cancelled' } });
-      cancelled.push({
-        offerId: offer.id,
-        reason: 'schedule_conflict',
-        myClassId: offer.myClassId,
-        wantedClassId: offer.wantedClassId,
-        conflictingClass: `${conflict.courseCode}-${conflict.classCode}`,
-      });
+    if (shouldCancel) {
+      if (offer.batchGroupId && !processedBatchGroupIds.has(offer.batchGroupId)) {
+        processedBatchGroupIds.add(offer.batchGroupId);
+        // Cascade to all sibling offers in this batch
+        const batchSiblings = openOffers.filter((o: any) => o.batchGroupId === offer.batchGroupId);
+        for (const sibling of batchSiblings) {
+          await tx.barterOffer.update({ where: { id: sibling.id }, data: { status: 'cancelled' } });
+          cancelled.push({
+            offerId: sibling.id,
+            reason: cancelReason,
+            myClassId: sibling.myClassId,
+            wantedClassId: sibling.wantedClassId,
+            conflictingClass: conflictingClassStr,
+          });
+        }
+      } else if (!offer.batchGroupId) {
+        await tx.barterOffer.update({ where: { id: offer.id }, data: { status: 'cancelled' } });
+        cancelled.push({
+          offerId: offer.id,
+          reason: cancelReason,
+          myClassId: offer.myClassId,
+          wantedClassId: offer.wantedClassId,
+          conflictingClass: conflictingClassStr,
+        });
+      }
     }
   }
 

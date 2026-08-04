@@ -316,7 +316,7 @@ describe('POST /api/offers/:id/take', () => {
       .send(validBody);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toMatch(/no longer has this class/i);
+    expect(res.body.error).toMatch(/no longer has class CS101-K01/i);
   });
 
   it('returns 500 when taker is not enrolled in the wanted class', async () => {
@@ -1024,5 +1024,272 @@ describe('High-Concurrency and Race Condition Hardening Tests', () => {
 
     const errors = [res1.body.error, res2.body.error];
     expect(errors).toContain('You already have an open offer for this class');
+  });
+
+  it('prevents concurrent claims of the same pick_drop offer (race condition)', async () => {
+    let callCount = 0;
+    const claimerUser2 = { nim: 'M0003333333', name: 'Claimer 2', email: 'claimer2@apps.ipb.ac.id', role: 'student' };
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      const offer = { id: 55, type: 'pick_drop', reservedForNim: null, status: 'open', offererNim: OFFERER_NIM, myClassId: classA.id, myClass: classA, offerer: offererUser };
+
+      tx.barterOffer.findUnique.mockResolvedValue(offer as any);
+      tx.user.findUnique.mockImplementation(async ({ where }) => {
+        return { nim: where.nim, name: `User ${where.nim}` } as any;
+      });
+      tx.enrollment.findFirst.mockImplementation(async ({ where }) => {
+        if (where.parallelClassId === classA.id || where.nim === OFFERER_NIM) {
+          return { id: 10, nim: OFFERER_NIM, parallelClassId: classA.id } as any;
+        }
+        return null;
+      });
+      tx.enrollment.findMany.mockImplementation(async ({ where }) => {
+        if (where.nim === OFFERER_NIM) return [{ id: 10, nim: OFFERER_NIM, parallelClassId: classA.id, parallelClass: classA }] as any;
+        return [];
+      });
+      tx.enrollment.delete.mockResolvedValue({} as any);
+      tx.enrollment.create.mockResolvedValue({} as any);
+      tx.barterOffer.findMany.mockResolvedValue([]);
+      tx.notification.create.mockResolvedValue({ id: 10, type: 'test', data: {} } as any);
+
+      tx.barterOffer.updateMany.mockImplementation(async () => {
+        callCount++;
+        return { count: callCount === 1 ? 1 : 0 };
+      });
+
+      return cb(tx);
+    });
+
+    const [res1, res2] = await Promise.all([
+      request(app).post('/api/offers/55/claim').set('Cookie', authCookie(takerUser)).send({ claimerNim: TAKER_NIM }),
+      request(app).post('/api/offers/55/claim').set('Cookie', authCookie(claimerUser2)).send({ claimerNim: 'M0003333333' }),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([200, 500]);
+
+    const failedRes = res1.status === 500 ? res1 : res2;
+    expect(failedRes.body.error).toMatch(/Offer already .* concurrently/i);
+  });
+
+  it('handles race condition between offer cancellation and take attempt', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      // Offer is already marked 'cancelled' by concurrent cancel action
+      const cancelledOffer = { id: 99, type: 'swap', status: 'cancelled', offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id };
+      tx.barterOffer.findUnique.mockResolvedValue(cancelledOffer as any);
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/99/take')
+      .set('Cookie', authCookie(takerUser))
+      .send({ takerNim: TAKER_NIM });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/Offer already taken/i);
+  });
+});
+
+// --- POST /api/offers/batch ---
+
+describe('POST /api/offers/batch', () => {
+  it('returns 401 without auth', async () => {
+    const res = await request(app).post('/api/offers/batch').send({
+      offers: [{ myClassId: classA.id, wantedClassId: classB.id }],
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 400 on empty offers array (Zod validation)', async () => {
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({ offers: [] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Validation failed');
+  });
+
+  it('rejects the entire batch if any offer is invalid (All-or-Nothing)', async () => {
+    const createdOffer = { id: 101, offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, status: 'open' };
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      // First offer is valid, second offer user is not enrolled in
+      tx.enrollment.findFirst
+        .mockResolvedValueOnce({ nim: OFFERER_NIM, parallelClassId: classA.id } as any)
+        .mockResolvedValueOnce(null);
+
+      tx.barterOffer.findFirst.mockResolvedValue(null);
+
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        return where.id === classA.id ? classA : classB;
+      });
+
+      tx.enrollment.findMany.mockResolvedValue([]);
+      tx.barterOffer.create.mockResolvedValue(createdOffer as any);
+
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({
+        offers: [
+          { myClassId: classA.id, wantedClassId: classB.id },
+          { myClassId: 99, wantedClassId: classB.id },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Beberapa kelas gagal divalidasi/i);
+    expect(res.body.skipped).toHaveLength(1);
+    expect(res.body.skipped[0]).toMatchObject({
+      myClassId: 99,
+      wantedClassId: classB.id,
+      reason: expect.stringMatching(/tidak terdaftar/i),
+    });
+  });
+
+  it('rejects batch if duplicate myClassId is provided in the package', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      tx.enrollment.findFirst.mockResolvedValue({ nim: OFFERER_NIM, parallelClassId: classA.id } as any);
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        return where.id === classA.id ? classA : classB;
+      });
+      tx.enrollment.findMany.mockResolvedValue([]);
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({
+        offers: [
+          { myClassId: classA.id, wantedClassId: classB.id },
+          { myClassId: classA.id, wantedClassId: classB.id },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Beberapa kelas gagal divalidasi/i);
+    expect(res.body.skipped[0].reason).toMatch(/Kelas sumber tidak boleh sama dalam satu paket/i);
+  });
+
+  it('rejects batch if target classes in package conflict with each other (intra-batch conflict)', async () => {
+    const classTarget1 = { id: 101, courseCode: 'CS101', classCode: 'K01', day: 'Monday', timeStart: '08:00', timeEnd: '10:00' };
+    const classTarget2 = { id: 102, courseCode: 'CS101', classCode: 'K02', day: 'Monday', timeStart: '09:00', timeEnd: '11:00' };
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      tx.enrollment.findFirst.mockResolvedValue({ nim: OFFERER_NIM } as any);
+      tx.barterOffer.findFirst.mockResolvedValue(null);
+
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === classA.id) return classA;
+        if (where.id === classB.id) return classB;
+        if (where.id === 101) return classTarget1;
+        if (where.id === 102) return classTarget2;
+        return null;
+      });
+
+      tx.enrollment.findMany.mockResolvedValue([]);
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({
+        offers: [
+          { myClassId: classA.id, wantedClassId: 101 },
+          { myClassId: classB.id, wantedClassId: 102 },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Beberapa kelas gagal divalidasi/i);
+    expect(res.body.skipped[0].reason).toMatch(/Kelas tujuan bentrok dengan kelas lain dalam paket yang sama/i);
+  });
+
+  it('rejects batch if an offer in the batch already has an open offer in DB', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      tx.enrollment.findFirst.mockResolvedValue({ nim: OFFERER_NIM, parallelClassId: classA.id } as any);
+      // Simulate existing open offer for classA
+      tx.barterOffer.findFirst.mockResolvedValue({ id: 88, status: 'open' } as any);
+
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        return where.id === classA.id ? classA : classB;
+      });
+
+      tx.enrollment.findMany.mockResolvedValue([]);
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({
+        offers: [{ myClassId: classA.id, wantedClassId: classB.id }],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Beberapa kelas gagal divalidasi/i);
+    expect(res.body.skipped[0].reason).toMatch(/Penawaran untuk kelas ini sudah ada yang aktif/i);
+  });
+
+  it('successfully creates an atomic package offer with a single batchGroupId', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      tx.enrollment.findFirst.mockResolvedValue({ nim: OFFERER_NIM, parallelClassId: classA.id } as any);
+      tx.barterOffer.findFirst.mockResolvedValue(null);
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        return where.id === classA.id ? classA : classB;
+      });
+      tx.enrollment.findMany.mockResolvedValue([]);
+      tx.barterOffer.create.mockImplementation(async ({ data }: any) => ({ ...data, id: 201 }));
+
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({
+        offers: [{ myClassId: classA.id, wantedClassId: classB.id }],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.created).toHaveLength(1);
+    expect(res.body.created[0].batchGroupId).toBeDefined();
+  });
+});
+
+describe('POST /api/offers/:id/take - Atomic Batch Take Edge Cases', () => {
+  it('returns 500 when attempting to take a batch offer where one sub-item is no longer open', async () => {
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      const batchGroupId = 'batch_uuid_999';
+      const offer1 = { id: 1, batchGroupId, type: 'swap', status: 'open', offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, myClass: classA, wantedClass: classB, offerer: offererUser };
+      const offer2 = { id: 2, batchGroupId, type: 'swap', status: 'cancelled', offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, myClass: classA, wantedClass: classB, offerer: offererUser };
+
+      tx.barterOffer.findUnique.mockResolvedValue(offer1 as any);
+      tx.barterOffer.findMany.mockResolvedValue([offer1, offer2] as any);
+
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/1/take')
+      .set('Cookie', authCookie(takerUser))
+      .send({ takerNim: TAKER_NIM });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/Paket penawaran ini sudah tidak utuh lagi/i);
   });
 });
