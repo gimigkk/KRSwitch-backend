@@ -6,7 +6,7 @@ import csvParser from 'csv-parser';
 const COURSE_REGEX = /^(.*?)\s*\((KOM\w+)\)$/;
 
 async function main() {
-  const filePath = path.join(process.cwd(), 'Pembagian_Peserta_KOM61_LIVE.csv');
+  const filePath = path.join(process.cwd(), 'Pembagian Kom_Setelah Tutup War_Fix.csv');
   if (!fs.existsSync(filePath)) {
     console.error(`File not found: ${filePath}`);
     process.exit(1);
@@ -19,7 +19,8 @@ async function main() {
   await new Promise<void>((resolve, reject) => {
     fs.createReadStream(filePath)
       .pipe(csvParser({
-        mapHeaders: ({ header }) => header.trim().replace(/^[\uFEFF\xA0]+|[\uFEFF\xA0]+$/g, '')
+        mapHeaders: ({ header }) => header.trim().replace(/^[\uFEFF\xA0]+|[\uFEFF\xA0]+$/g, '').replace(/\r/g, ''),
+        mapValues: ({ value }) => typeof value === 'string' ? value.replace(/\r/g, '').trim() : value
       }))
       .on('headers', (headers: string[]) => {
         headers.forEach((h: string) => headersSet.add(h.trim()));
