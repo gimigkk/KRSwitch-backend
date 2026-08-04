@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { Server } from 'socket.io';
 import { requireAuth, requireStudent } from '../middleware/authMiddleware';
+import { requireBarterEnabled } from '../middleware/requireBarterEnabled';
 import { validate, asyncHandler } from '../middleware/helpers';
 import { prisma } from '../prisma/db';
 import {
@@ -35,7 +36,7 @@ export function createOffersRouter(io: Server) {
     res.json(offers);
   }));
 
-  router.post('/', requireStudent, validate(createOfferSchema), asyncHandler(async (req: any, res: any) => {
+  router.post('/', requireStudent, requireBarterEnabled, validate(createOfferSchema), asyncHandler(async (req: any, res: any) => {
     const { myClassId, wantedClassId } = req.body;
     const offererNim = req.user!.nim;
 
@@ -113,7 +114,7 @@ export function createOffersRouter(io: Server) {
     }
   }));
 
-  router.post('/:id/take', requireStudent, validate(takeOfferSchema), asyncHandler(async (req: any, res: any) => {
+  router.post('/:id/take', requireStudent, requireBarterEnabled, validate(takeOfferSchema), asyncHandler(async (req: any, res: any) => {
     const offerId = parseInt(req.params.id);
     const { takerNim } = req.body;
 
@@ -249,7 +250,7 @@ export function createOffersRouter(io: Server) {
     res.json({ message: 'Barter completed successfully' });
   }));
 
-  router.post('/pick-drop', requireStudent, validate(createPickDropOfferSchema), asyncHandler(async (req: any, res: any) => {
+  router.post('/pick-drop', requireStudent, requireBarterEnabled, validate(createPickDropOfferSchema), asyncHandler(async (req: any, res: any) => {
     const { myClassId, reservedForNim } = req.body;
     const offererNim = req.user!.nim;
 
@@ -329,7 +330,7 @@ export function createOffersRouter(io: Server) {
     }
   }));
 
-  router.post('/:id/claim', requireStudent, validate(claimPickDropOfferSchema), asyncHandler(async (req: any, res: any) => {
+  router.post('/:id/claim', requireStudent, requireBarterEnabled, validate(claimPickDropOfferSchema), asyncHandler(async (req: any, res: any) => {
     const offerId = parseInt(req.params.id);
     const { claimerNim } = req.body;
 

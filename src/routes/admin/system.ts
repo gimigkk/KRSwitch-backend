@@ -9,6 +9,7 @@ import { requireAuth, requireAdmin, requireSuperAdmin } from '../../middleware/a
 import { asyncHandler, validate } from '../../middleware/helpers';
 import { prisma } from '../../prisma/db';
 import { logActivity } from '../../utils/activity';
+import { isBarterEnabled, setBarterEnabled } from '../../utils/systemConfig';
 import { resetConfirmSchema, sanitizeCsv } from './shared';
 
 const COURSE_REGEX = /^(.*?)\s*\((KOM\w+)\)$/;
@@ -27,6 +28,29 @@ export default (io: Server) => {
   });
 
   // --- System Operations ---------------------------------------------
+
+  // GET /api/admin/barter-status
+  router.get('/barter-status', requireAuth, requireAdmin, asyncHandler(async (_req: any, res: any) => {
+    res.json({ enabled: isBarterEnabled() });
+  }));
+
+  // POST /api/admin/barter-toggle
+  router.post('/barter-toggle', requireAuth, requireAdmin, asyncHandler(async (req: any, res: any) => {
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'Parameter "enabled" (boolean) wajib diisi' });
+    }
+
+    setBarterEnabled(enabled);
+    
+    // Broadcast status change to all connected clients
+    io.emit('barter-status-changed', { enabled });
+    
+    const statusText = enabled ? 'DIBUKA / DIAKTIFKAN' : 'DITUTUP / DIJEDA';
+    await logActivity('SYSTEM_BARTER_TOGGLE', req.user!.nim, `Sistem barter telah ${statusText} oleh admin.`);
+
+    res.json({ message: `Sistem barter berhasil ${enabled ? 'diaktifkan' : 'dinonaktifkan'}.`, enabled });
+  }));
 
   // POST /api/admin/reset
   router.post(

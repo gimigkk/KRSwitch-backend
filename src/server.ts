@@ -15,6 +15,9 @@ import { createOffersRouter } from './routes/offers';
 import { setupSocket } from './socket/socketHandler';
 import { setActivityIo } from './utils/activity';
 import { doubleCsrfProtection, trustedOriginBypass } from './middleware/csrf';
+import { loadSystemConfig } from './utils/systemConfig';
+
+loadSystemConfig();
 
 const app    = express();
 app.set('trust proxy', 1);

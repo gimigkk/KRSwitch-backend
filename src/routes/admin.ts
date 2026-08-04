@@ -4,6 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/authMiddleware';
 import { asyncHandler } from '../middleware/helpers';
 import { prisma } from '../prisma/db';
+import { isBarterEnabled } from '../utils/systemConfig';
 
 const router = Router();
 
@@ -21,6 +22,10 @@ router.use(limiter);
 
 router.get('/health', (_req, res) => {
   res.json({ status: 'OK', message: 'KRSwitch Backend Running' });
+});
+
+router.get('/api/barter-status', (_req, res) => {
+  res.json({ enabled: isBarterEnabled() });
 });
 
 router.get('/api/me', requireAuth, (req: any, res) => {
