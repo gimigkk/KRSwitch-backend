@@ -3,7 +3,7 @@ import { Server } from 'socket.io';
 import { requireAuth, requireAdmin } from '../../middleware/authMiddleware';
 import { asyncHandler } from '../../middleware/helpers';
 import { prisma } from '../../prisma/db';
-import { createNotification } from '../../controllers/offerController';
+import { createNotification, cancelStaleOffers, getUserEnrollmentsExcluding } from '../../controllers/offerController';
 import { logActivity } from '../../utils/activity';
 import { sendNotificationEmail } from '../../utils/email';
 
@@ -48,6 +48,15 @@ export default (io: Server) => {
       include: { parallelClass: true, user: true },
     });
 
+    const enrollments = await getUserEnrollmentsExcluding(updated.nim, 0, prisma);
+    const userSchedule = (enrollments || []).map(e => e.parallelClass).filter(Boolean);
+    const cancelledOffers = await cancelStaleOffers(updated.nim, userSchedule, existing.parallelClassId, prisma);
+
+    for (const cancelled of cancelledOffers) {
+      io.emit('offer-taken', { offerId: cancelled.offerId });
+      io.to(`user-${updated.nim}`).emit('offer-auto-cancelled', cancelled);
+    }
+
     const notification = await createNotification(prisma, updated.nim, 'admin_enrollment_updated', {
       courseCode: updated.parallelClass.courseCode,
       oldClassCode: existing.parallelClass?.classCode || 'Unknown',
@@ -76,6 +85,15 @@ export default (io: Server) => {
 
     const nim = existing.nim;
     await prisma.enrollment.delete({ where: { id: enrollmentId } });
+
+    const enrollments = await getUserEnrollmentsExcluding(nim, 0, prisma);
+    const userSchedule = (enrollments || []).map(e => e.parallelClass).filter(Boolean);
+    const cancelledOffers = await cancelStaleOffers(nim, userSchedule, existing.parallelClassId, prisma);
+
+    for (const cancelled of cancelledOffers) {
+      io.emit('offer-taken', { offerId: cancelled.offerId });
+      io.to(`user-${nim}`).emit('offer-auto-cancelled', cancelled);
+    }
     
     const notification = await createNotification(prisma, nim, 'admin_enrollment_deleted', {
       courseCode: existing.parallelClass.courseCode,

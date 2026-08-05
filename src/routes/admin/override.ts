@@ -86,8 +86,19 @@ export default (io: Server) => {
       },
     });
 
+    const batchGroupIds = staleOffers.map(o => o.batchGroupId).filter(Boolean) as string[];
+    const allStaleOffers = await prisma.barterOffer.findMany({
+      where: {
+        status: 'open',
+        OR: [
+          { id: { in: staleOffers.map(o => o.id) } },
+          ...(batchGroupIds.length > 0 ? [{ batchGroupId: { in: batchGroupIds } }] : [])
+        ]
+      }
+    });
+
     await prisma.barterOffer.updateMany({
-      where: { id: { in: staleOffers.map(o => o.id) } },
+      where: { id: { in: allStaleOffers.map(o => o.id) } },
       data: { status: 'cancelled' },
     });
 
@@ -98,7 +109,7 @@ export default (io: Server) => {
       ],
     });
 
-    staleOffers.forEach(offer => {
+    allStaleOffers.forEach(offer => {
       io.emit('offer-taken', { offerId: offer.id });
       io.to(`user-${offer.offererNim}`).emit('offer-auto-cancelled', { 
         offerId: offer.id, 

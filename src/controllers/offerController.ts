@@ -45,12 +45,21 @@ const staleCancelledOfferSchema = z.object({
 const classRefSchema = z.object({ courseCode: z.string(), classCode: z.string() });
 const staleCancelledArray = z.array(staleCancelledOfferSchema);
 
+const batchItemSchema = z.object({
+  courseCode: z.string(),
+  offeringClass: z.string(),
+  seekingClass: z.string(),
+});
+
 export const barterMatchedAsOffererDataSchema = z.object({
   offerId: z.number(),
   takerNim: z.string(),
   takerName: z.string(),
   yourOldClass: classRefSchema,
   yourNewClass: classRefSchema,
+  isBatch: z.boolean().optional(),
+  count: z.number().optional(),
+  items: z.array(batchItemSchema).optional(),
   staleCancelledOffers: staleCancelledArray,
 });
 
@@ -60,6 +69,9 @@ export const barterMatchedAsTakerDataSchema = z.object({
   offererName: z.string(),
   yourOldClass: classRefSchema,
   yourNewClass: classRefSchema,
+  isBatch: z.boolean().optional(),
+  count: z.number().optional(),
+  items: z.array(batchItemSchema).optional(),
   staleCancelledOffers: staleCancelledArray,
 });
 
@@ -75,7 +87,10 @@ const barterAutoMatchedDataSchema = z.object({
 export const barterCancelledDataSchema = z.object({
   offerId: z.number(),
   courseCode: z.string(),
-  classCode: z.string(),
+  classCode: z.string().optional(),
+  isBatch: z.boolean().optional(),
+  count: z.number().optional(),
+  items: z.array(batchItemSchema).optional(),
   reason: z.string().optional(),
 });
 
@@ -148,15 +163,16 @@ export async function getUserEnrollmentsExcluding(
   excludeClassId: number,
   tx: any = prisma
 ): Promise<EnrollmentWithClass[]> {
-  return tx.enrollment.findMany({
+  const res = await tx.enrollment.findMany({
     where: { nim, parallelClassId: { not: excludeClassId } },
     include: { parallelClass: true },
   });
+  return res || [];
 }
 
 export async function cancelStaleOffers(
   nim: string,
-  newSchedule: EnrollmentWithClass['parallelClass'][],
+  newSchedule: EnrollmentWithClass['parallelClass'][] = [],
   lostClassId: number,
   tx: any
 ): Promise<StaleCancelledOffer[]> {
@@ -164,6 +180,8 @@ export async function cancelStaleOffers(
     where: { offererNim: nim, status: 'open' },
     include: { wantedClass: true, myClass: true },
   });
+
+  if (!openOffers || !Array.isArray(openOffers) || openOffers.length === 0) return [];
 
   const cancelled: StaleCancelledOffer[] = [];
   const processedBatchGroupIds = new Set<string>();
@@ -249,6 +267,7 @@ export async function autoMatch(newOffer: {
     const matchingOffer = await tx.barterOffer.findFirst({
       where: {
         status: 'open',
+        batchGroupId: null,
         myClassId: newOffer.wantedClassId,
         wantedClassId: newOffer.myClassId,
         offererNim: { not: newOffer.offererNim },

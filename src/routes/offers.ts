@@ -130,6 +130,7 @@ export function createOffersRouter(io: Server) {
         await tx.$queryRaw`SELECT nim FROM users WHERE nim = ${offererNim} FOR UPDATE`;
 
         const myClassIdsSeen = new Set<number>();
+        const wantedClassIdsSeen = new Set<number>();
         for (const item of offers) {
           const { myClassId, wantedClassId } = item;
 
@@ -161,6 +162,12 @@ export function createOffersRouter(io: Server) {
             continue;
           }
 
+          if (wantedClassIdsSeen.has(wantedClassId)) {
+            skippedItems.push({ myClassId, wantedClassId, reason: 'Kelas target tidak boleh sama dalam satu paket' });
+            continue;
+          }
+          wantedClassIdsSeen.add(wantedClassId);
+
           if (myClass.courseCode !== wantedClass.courseCode) {
             skippedItems.push({ myClassId, wantedClassId, reason: 'Mata kuliah harus sama' });
             continue;
@@ -171,8 +178,12 @@ export function createOffersRouter(io: Server) {
             continue;
           }
 
-          const offererOtherEnrollments = await getUserEnrollmentsExcluding(offererNim, myClassId, tx);
-          const conflictingClass = offererOtherEnrollments.find(e => hasScheduleConflict(e.parallelClass, wantedClass));
+          const allMyClassIdsInBatch = offers.map((o) => o.myClassId);
+          const offererOtherEnrollments = await tx.enrollment.findMany({
+            where: { nim: offererNim, parallelClassId: { notIn: allMyClassIdsInBatch } },
+            include: { parallelClass: true },
+          });
+          const conflictingClass = offererOtherEnrollments.find((e: any) => hasScheduleConflict(e.parallelClass, wantedClass));
           if (conflictingClass) {
             skippedItems.push({
               myClassId,
@@ -353,11 +364,25 @@ export function createOffersRouter(io: Server) {
         takerCancelled.push(...tc);
       }
 
+      const offererCancelledMap = new Map<number, any>();
+      for (const item of offererCancelled) offererCancelledMap.set(item.offerId, item);
+      offererCancelled = Array.from(offererCancelledMap.values());
+
+      const takerCancelledMap = new Map<number, any>();
+      for (const item of takerCancelled) takerCancelledMap.set(item.offerId, item);
+      takerCancelled = Array.from(takerCancelledMap.values());
+
       const isPackage = offersToProcess.length > 1;
       const combinedOldClassCodesOfferer = offersToProcess.map(o => o.myClass.classCode).join(', ');
       const combinedNewClassCodesOfferer = offersToProcess.map(o => o.wantedClass!.classCode).join(', ');
       const courseCode = offersToProcess[0].myClass.courseCode;
-      const displayCourseCode = isPackage ? "Package" : courseCode;
+      const displayCourseCode = isPackage ? "Paket Pertukaran" : courseCode;
+
+      const batchItems = isPackage ? offersToProcess.map(o => ({
+        courseCode: o.myClass.courseCode,
+        offeringClass: o.myClass.classCode,
+        seekingClass: o.wantedClass!.classCode,
+      })) : undefined;
 
       const [offererNotification, takerNotification] = await Promise.all([
         createNotification(tx, offererNim, 'barter_matched_as_offerer', {
@@ -366,6 +391,9 @@ export function createOffersRouter(io: Server) {
           takerName: taker.name,
           yourOldClass: { courseCode: displayCourseCode, classCode: combinedOldClassCodesOfferer },
           yourNewClass: { courseCode: displayCourseCode, classCode: combinedNewClassCodesOfferer },
+          isBatch: isPackage,
+          count: offersToProcess.length,
+          items: batchItems,
           staleCancelledOffers: offererCancelled,
         }),
         createNotification(tx, takerNim, 'barter_matched_as_taker', {
@@ -374,6 +402,9 @@ export function createOffersRouter(io: Server) {
           offererName: initialOffer.offerer.name,
           yourOldClass: { courseCode: displayCourseCode, classCode: combinedNewClassCodesOfferer },
           yourNewClass: { courseCode: displayCourseCode, classCode: combinedOldClassCodesOfferer },
+          isBatch: isPackage,
+          count: offersToProcess.length,
+          items: batchItems,
           staleCancelledOffers: takerCancelled,
         }),
       ]);
@@ -561,13 +592,31 @@ export function createOffersRouter(io: Server) {
         data: offererEnrollments.map(e => ({ nim: claimerNim, parallelClassId: e.parallelClassId }))
       });
 
-      const offererNewSchedule = (await getUserEnrollmentsExcluding(offer.offererNim, 0, tx)).map(e => e.parallelClass);
+      const offererEnrollmentsList = await getUserEnrollmentsExcluding(offer.offererNim, 0, tx);
+      const offererNewSchedule = (offererEnrollmentsList || []).map(e => e.parallelClass).filter(Boolean);
+
+      const claimerEnrollmentsList = await getUserEnrollmentsExcluding(claimerNim, 0, tx);
+      const claimerNewSchedule = (claimerEnrollmentsList || []).map(e => e.parallelClass).filter(Boolean);
       
       let offererCancelled: any[] = [];
       for (const enr of offererEnrollments) {
         const cancelled = await cancelStaleOffers(offer.offererNim, offererNewSchedule, enr.parallelClassId, tx);
         offererCancelled.push(...cancelled);
       }
+
+      let claimerCancelled: any[] = [];
+      for (const enr of offererEnrollments) {
+        const cancelled = await cancelStaleOffers(claimerNim, claimerNewSchedule, 0, tx);
+        claimerCancelled.push(...cancelled);
+      }
+
+      const offererCancelledMap = new Map<number, any>();
+      for (const item of offererCancelled) offererCancelledMap.set(item.offerId, item);
+      offererCancelled = Array.from(offererCancelledMap.values());
+
+      const claimerCancelledMap = new Map<number, any>();
+      for (const item of claimerCancelled) claimerCancelledMap.set(item.offerId, item);
+      claimerCancelled = Array.from(claimerCancelledMap.values());
 
       const packageClassCodes = offererEnrollments.map(e => e.parallelClass.classCode).join(' & ');
 
@@ -586,14 +635,14 @@ export function createOffersRouter(io: Server) {
           offererName: offer.offerer.name,
           yourOldClass: { courseCode: offer.myClass.courseCode, classCode: 'NONE' },
           yourNewClass: { courseCode: offer.myClass.courseCode, classCode: packageClassCodes },
-          staleCancelledOffers: [],
+          staleCancelledOffers: claimerCancelled,
         }),
       ]);
 
-      return { offer, offererCancelled, offererNotification, claimerNotification, offererEnrollments };
+      return { offer, offererCancelled, claimerCancelled, offererNotification, claimerNotification, offererEnrollments };
     });
 
-    const { offer, offererCancelled, offererNotification, claimerNotification, offererEnrollments } = result;
+    const { offer, offererCancelled, claimerCancelled, offererNotification, claimerNotification, offererEnrollments } = result;
 
     const packageClassCodes = offererEnrollments.map(e => e.parallelClass.classCode).join(' & ');
     await logActivity(
@@ -624,6 +673,11 @@ export function createOffersRouter(io: Server) {
       io.to(`user-${offer.offererNim}`).emit('offer-auto-cancelled', cancelled);
     }
 
+    for (const cancelled of claimerCancelled) {
+      io.emit('offer-taken', { offerId: cancelled.offerId });
+      io.to(`user-${claimerNim}`).emit('offer-auto-cancelled', cancelled);
+    }
+
     res.json({ message: 'Class claimed successfully' });
   }));
 
@@ -644,15 +698,24 @@ export function createOffersRouter(io: Server) {
       if (offer.batchGroupId) {
         const batchOffers = await tx.barterOffer.findMany({
           where: { batchGroupId: offer.batchGroupId, status: 'open' },
-          include: { myClass: true }
+          include: { myClass: true, wantedClass: true }
         });
         for (const bo of batchOffers) {
           await tx.barterOffer.update({ where: { id: bo.id }, data: { status: 'cancelled' } });
           cancelledIds.push(bo.id);
+        }
+        if (batchOffers.length > 0) {
+          const items = batchOffers.map(b => ({
+            courseCode: b.myClass.courseCode,
+            offeringClass: b.myClass.classCode,
+            seekingClass: b.wantedClass?.classCode || 'DROP',
+          }));
           await createNotification(tx, userNim, 'barter_cancelled', {
-            offerId: bo.id,
-            courseCode: bo.myClass.courseCode,
-            classCode: bo.myClass.classCode,
+            offerId: offer.id,
+            isBatch: true,
+            count: batchOffers.length,
+            courseCode: 'Paket Pertukaran',
+            items,
             reason: 'self_cancelled'
           });
         }
@@ -671,17 +734,14 @@ export function createOffersRouter(io: Server) {
     await logActivity('BARTER_CANCELLED', userNim, `Cancelled open barter offer(s) (Offer ID: ${cancelledIds.join(', ')}).`);
 
     // Ambil notifikasi yang di-generate buat dikirim lewat socket
-    const notifications = await prisma.notification.findMany({
+    const notification = await prisma.notification.findFirst({
       where: { recipientNim: userNim, type: 'barter_cancelled' },
       orderBy: { createdAt: 'desc' },
-      take: cancelledIds.length > 0 ? cancelledIds.length : 1
     });
 
-    if (notifications && Array.isArray(notifications)) {
-      for (const notification of notifications) {
-        io.to(`user-${userNim}`).emit('new-notification', notification);
-        sendNotificationEmail(userNim, notification.type as any, notification.data).catch(console.error);
-      }
+    if (notification) {
+      io.to(`user-${userNim}`).emit('new-notification', notification);
+      sendNotificationEmail(userNim, notification.type as any, notification.data).catch(console.error);
     }
     
     for (const cid of cancelledIds) {

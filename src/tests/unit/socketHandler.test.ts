@@ -305,4 +305,14 @@ describe('Socket.IO Handler Concurrency & Event Testing', () => {
     // Cleanup
     devices.forEach(d => d.disconnect());
   });
+
+  it('handles disconnectUserSockets gracefully when the target user is offline (no active room/sockets)', async () => {
+    // Call disconnectUserSockets for an offline NIM
+    expect(() => {
+      disconnectUserSockets(ioServer, 'M9999999999', 'Account deactivated.');
+    }).not.toThrow();
+
+    // Verify online count remains 0
+    expect(getOnlineCount()).toBe(0);
+  });
 });

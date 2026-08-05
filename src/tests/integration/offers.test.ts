@@ -1112,6 +1112,21 @@ describe('POST /api/offers/batch', () => {
     expect(res.body.error).toBe('Validation failed');
   });
 
+  it('returns 400 when batch offers array exceeds max limit of 15 items (Zod validation)', async () => {
+    const sixteenOffers = Array.from({ length: 16 }, (_, i) => ({
+      myClassId: 10 + i,
+      wantedClassId: 100 + i,
+    }));
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({ offers: sixteenOffers });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Validation failed');
+  });
+
   it('rejects the entire batch if any offer is invalid (All-or-Nothing)', async () => {
     const createdOffer = { id: 101, offererNim: OFFERER_NIM, myClassId: classA.id, wantedClassId: classB.id, status: 'open' };
 
@@ -1267,6 +1282,57 @@ describe('POST /api/offers/batch', () => {
     expect(res.status).toBe(201);
     expect(res.body.created).toHaveLength(1);
     expect(res.body.created[0].batchGroupId).toBeDefined();
+  });
+
+  it('allows batch offer when target class of row 1 overlaps with source class of row 2 (since row 2 is being swapped out)', async () => {
+    const classSource1 = { id: 10, courseCode: 'CS101', classCode: 'K01', day: 'Monday', timeStart: '08:00', timeEnd: '10:00' };
+    const classSource2 = { id: 20, courseCode: 'CS102', classCode: 'K01', day: 'Tuesday', timeStart: '10:00', timeEnd: '12:00' };
+
+    const classTarget1 = { id: 101, courseCode: 'CS101', classCode: 'K02', day: 'Tuesday', timeStart: '10:00', timeEnd: '12:00' }; // Overlaps with classSource2
+    const classTarget2 = { id: 102, courseCode: 'CS102', classCode: 'K02', day: 'Monday', timeStart: '08:00', timeEnd: '10:00' };  // Overlaps with classSource1
+
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = buildTxMock();
+      tx.enrollment.findFirst.mockImplementation(async ({ where }) => {
+        return { nim: OFFERER_NIM, parallelClassId: where.parallelClassId } as any;
+      });
+      tx.barterOffer.findFirst.mockResolvedValue(null);
+
+      tx.parallelClass.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 10) return classSource1;
+        if (where.id === 20) return classSource2;
+        if (where.id === 101) return classTarget1;
+        if (where.id === 102) return classTarget2;
+        return null;
+      });
+
+      // Enrollments: user is enrolled in classSource1 and classSource2
+      tx.enrollment.findMany.mockImplementation(async ({ where }) => {
+        const notIn = where.parallelClassId?.notIn || [];
+        const enrollments = [
+          { parallelClassId: 10, parallelClass: classSource1 },
+          { parallelClassId: 20, parallelClass: classSource2 },
+        ].filter(e => !notIn.includes(e.parallelClassId));
+        return enrollments as any;
+      });
+
+      tx.barterOffer.create.mockImplementation(async ({ data }: any) => ({ ...data, id: Math.floor(Math.random() * 1000) }));
+
+      return cb(tx);
+    });
+
+    const res = await request(app)
+      .post('/api/offers/batch')
+      .set('Cookie', authCookie())
+      .send({
+        offers: [
+          { myClassId: 10, wantedClassId: 101 },
+          { myClassId: 20, wantedClassId: 102 },
+        ],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.created).toHaveLength(2);
   });
 });
 
